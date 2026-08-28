@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "357445967269",
+    "project_id": "crecheapp-12070",
+    "storage_bucket": "crecheapp-12070.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:357445967269:android:00c285dfd1f59ba3a69c4c",
+        "android_client_info": {
+          "package_name": "com.abderrahim.jeupousse"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDARLD3Xv3cIcIa9cS45o7jB3fR8r9Q0Jc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:357445967269:android:8c44cd9e77cb11b2a69c4c",
+        "android_client_info": {
+          "package_name": "com.souiria.CrecheApp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDARLD3Xv3cIcIa9cS45o7jB3fR8r9Q0Jc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
