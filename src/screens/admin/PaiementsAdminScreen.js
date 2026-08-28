@@ -35,7 +35,10 @@ export default function PaiementsAdminScreen() {
   const [enfantsFamille, setEnfantsFamille] = useState([]);
   const [factTypeSaisie, setFactTypeSaisie] = useState('mensuel'); 
   const [factEnfantId, setFactEnfantId] = useState('');
-  const [factMois, setFactMois] = useState('');
+  
+  // 🚀 NOUVEAU: On remplace "factMois" par un tableau pour les sélections multiples
+  const [selectedMoisList, setSelectedMoisList] = useState([]);
+  
   const [factService, setFactService] = useState('Cantine');
   const [factTitreExtra, setFactTitreExtra] = useState('');
   const [factMontant, setFactMontant] = useState('');
@@ -74,7 +77,7 @@ export default function PaiementsAdminScreen() {
   useFocusEffect(
     useCallback(() => {
       rafraichirDonnees();
-      setFactMois(moisScolaires.includes(moisActuelStr) ? moisActuelStr : 'Septembre');
+      setSelectedMoisList([moisScolaires.includes(moisActuelStr) ? moisActuelStr : 'Septembre']);
     }, [])
   );
 
@@ -100,7 +103,6 @@ export default function PaiementsAdminScreen() {
     }
   };
 
-  // 🚀 RÉSOLUTION DE LA LIMITE SUPABASE : PAGINATION COMPLÈTE
   const fetchPaiements = async () => {
     try {
       let allData = [];
@@ -217,7 +219,6 @@ export default function PaiementsAdminScreen() {
     setModalVisible(true);
   };
 
-  // 🚀 FONCTION UNIQUE POUR ÉPINGLER / DÉPINGLER UN PARENT
   const toggleEpingleFamille = async (famille) => {
     try {
       const nouvelEtat = !famille.epingle;
@@ -232,25 +233,61 @@ export default function PaiementsAdminScreen() {
     }
   };
 
+  // 🚀 NOUVELLE FONCTION POUR SÉLECTION MULTIPLE DES MOIS
+  const toggleMoisSelection = (mois) => {
+    if (selectedMoisList.includes(mois)) {
+      setSelectedMoisList(selectedMoisList.filter(m => m !== mois));
+    } else {
+      setSelectedMoisList([...selectedMoisList, mois]);
+    }
+  };
+
   const validerAjoutFacture = async () => {
     if (!factMontant) return alert("Veuillez indiquer un montant.");
-    setLoading(true);
+    if (factTypeSaisie === 'mensuel' && selectedMoisList.length === 0) return alert("Veuillez sélectionner au moins un mois.");
     
+    setLoading(true);
     const anneePourTitre = anneeActive === 'Toutes' ? anneesDisponibles[2] : anneeActive;
-    let titre = factTypeSaisie === 'mensuel' ? `${factService} - ${factMois} (${anneePourTitre})` : `${factTitreExtra} (${anneePourTitre})`;
-    let moisBase = factTypeSaisie === 'mensuel' ? factMois : null;
     let typeBase = factTypeSaisie === 'mensuel' ? factService.toLowerCase() : 'extra';
 
     try {
-      const payload = { enfant_id: factEnfantId, titre: titre, montant: parseFloat(factMontant), statut: 'en_attente', type: typeBase, mois: moisBase };
-      if (familleSelectionnee.originalParentId) payload.parent_id = familleSelectionnee.originalParentId;
+      const payloads = [];
 
-      const { error } = await supabase.from('paiements').insert([payload]);
+      // 🚀 CRÉATION DE PLUSIEURS FACTURES EN MÊME TEMPS
+      if (factTypeSaisie === 'mensuel') {
+        selectedMoisList.forEach(mois => {
+          payloads.push({
+            enfant_id: factEnfantId,
+            titre: `${factService} - ${mois} (${anneePourTitre})`,
+            montant: parseFloat(factMontant),
+            statut: 'en_attente',
+            type: typeBase,
+            mois: mois,
+            parent_id: familleSelectionnee.originalParentId || null
+          });
+        });
+      } else {
+        payloads.push({
+          enfant_id: factEnfantId,
+          titre: `${factTitreExtra} (${anneePourTitre})`,
+          montant: parseFloat(factMontant),
+          statut: 'en_attente',
+          type: typeBase,
+          mois: null,
+          parent_id: familleSelectionnee.originalParentId || null
+        });
+      }
+
+      const { error } = await supabase.from('paiements').insert(payloads);
       if (error) throw error;
 
-      alert("La facture a bien été ajoutée au dossier !");
-      setModalAddFactureVisible(false); setFactMontant(''); setFactTitreExtra('');
-      rafraichirDonnees(); setModalVisible(false);
+      alert(`Facture(s) générée(s) avec succès !`);
+      setModalAddFactureVisible(false); 
+      setFactMontant(''); 
+      setFactTitreExtra('');
+      setSelectedMoisList([moisScolaires.includes(moisActuelStr) ? moisActuelStr : 'Septembre']);
+      rafraichirDonnees(); 
+      setModalVisible(false);
     } catch (error) { alert(error.message); } finally { setLoading(false); }
   };
 
@@ -609,12 +646,20 @@ export default function PaiementsAdminScreen() {
     }
   });
 
-  // 🚀 TRI : D'abord les épinglés (true en premier), puis tri alphabétique par nom de parent
-  const listeFamilles = Object.values(famillesMap).sort((a, b) => {
-    if (a.epingle && !b.epingle) return -1;
-    if (!a.epingle && b.epingle) return 1;
-    return a.parent.localeCompare(b.parent);
-  });
+  const listeFamilles = Object.values(famillesMap)
+    .filter(f => {
+      if (!searchQuery) return true;
+      const q = searchQuery.toLowerCase().trim();
+      const parentMatch = f.parent.toLowerCase().includes(q);
+      const codeMatch = String(f.codeFamille || f.id).toLowerCase().includes(q);
+      const enfantMatch = f.enfantsArray.some(e => e.toLowerCase().includes(q));
+      return parentMatch || codeMatch || enfantMatch;
+    })
+    .sort((a, b) => {
+      if (a.epingle && !b.epingle) return -1;
+      if (!a.epingle && b.epingle) return 1;
+      return a.parent.localeCompare(b.parent);
+    });
 
   listeFamilles.forEach(fam => {
     fam.factures.sort((a, b) => {
@@ -694,11 +739,30 @@ export default function PaiementsAdminScreen() {
       <View style={styles.headerContainer}>
         <View style={styles.headerTopRow}>
           <Text style={styles.headerTitle}>Gestion Financière</Text>
-          <View style={styles.yearPickerWrapper}>
-            <Picker selectedValue={anneeActive} onValueChange={(val) => setAnneeActive(val)} style={styles.pickerHeader}>
-              <Picker.Item label="Toutes années" value="Toutes" />
-              {anneesDisponibles.map(a => <Picker.Item key={a} label={a} value={a} />)}
-            </Picker>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <TouchableOpacity style={styles.refreshBtn} onPress={rafraichirDonnees} disabled={loading}>
+              {loading ? <ActivityIndicator size="small" color="#4F46E5" /> : <Text style={{ fontSize: 16 }}>🔄</Text>}
+            </TouchableOpacity>
+            
+            <View style={styles.yearPickerWrapper}>
+              <Picker selectedValue={anneeActive} onValueChange={(val) => setAnneeActive(val)} style={styles.pickerHeader}>
+                <Picker.Item label="Toutes années" value="Toutes" />
+                {anneesDisponibles.map(a => <Picker.Item key={a} label={a} value={a} />)}
+              </Picker>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.searchRow}>
+          <View style={styles.searchContainer}>
+            <Text style={styles.searchIcon}>🔍</Text>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Rechercher parent, enfant ou code..."
+              placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
           </View>
         </View>
 
@@ -1064,11 +1128,22 @@ export default function PaiementsAdminScreen() {
                         <Picker.Item label="Transport" value="Transport" />
                       </Picker>
                     </View>
-                    <Text style={styles.label}>Mois concerné</Text>
-                    <View style={styles.pickerContainer}>
-                      <Picker selectedValue={factMois} onValueChange={setFactMois}>
-                        {moisScolaires.map(m => <Picker.Item key={m} label={m} value={m} />)}
-                      </Picker>
+                    <Text style={styles.label}>Mois concerné(s) - Sélectionnez un ou plusieurs</Text>
+                    <View style={styles.moisGrid}>
+                      {moisScolaires.map(m => {
+                        const isSelected = selectedMoisList.includes(m);
+                        return (
+                          <TouchableOpacity 
+                            key={m} 
+                            style={[styles.moisChip, isSelected && styles.moisChipActive]} 
+                            onPress={() => toggleMoisSelection(m)}
+                          >
+                            <Text style={[styles.moisChipText, isSelected && styles.moisChipTextActive]}>
+                              {m.substring(0, 3)}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
                   </>
                 ) : (
@@ -1099,10 +1174,17 @@ export default function PaiementsAdminScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   headerContainer: { backgroundColor: '#FFFFFF', paddingTop: Platform.OS === 'ios' ? 40 : 20, borderBottomLeftRadius: 24, borderBottomRightRadius: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.03, shadowRadius: 10, elevation: 3, zIndex: 10, marginBottom: 10 },
-  headerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, marginBottom: 20 },
+  headerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, marginBottom: 15 },
   headerTitle: { fontSize: 24, fontWeight: '800', color: '#0F172A', letterSpacing: -0.5 },
-  yearPickerWrapper: { backgroundColor: '#EEF2FF', borderRadius: 8, borderWidth: 1, borderColor: '#C7D2FE', height: 36, justifyContent: 'center', minWidth: 140 },
+  refreshBtn: { backgroundColor: '#EEF2FF', width: 36, height: 36, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginRight: 10, borderWidth: 1, borderColor: '#C7D2FE' },
+  yearPickerWrapper: { flex: 1, backgroundColor: '#EEF2FF', borderRadius: 8, borderWidth: 1, borderColor: '#C7D2FE', height: 36, justifyContent: 'center', minWidth: 140 },
   pickerHeader: { height: 36, color: '#4F46E5', fontWeight: 'bold' },
+  
+  searchRow: { flexDirection: 'row', paddingHorizontal: 20, marginBottom: 15 },
+  searchContainer: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', paddingHorizontal: 12, borderRadius: 10, height: 44, borderWidth: 1, borderColor: '#E2E8F0' },
+  searchIcon: { fontSize: 16, marginRight: 8 },
+  searchInput: { flex: 1, fontSize: 14, color: '#334155' },
+
   tabContainer: { flexDirection: 'row', backgroundColor: '#F1F5F9', marginHorizontal: 20, marginBottom: 20, borderRadius: 12, padding: 4 },
   tabBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
   tabActive: { backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
@@ -1202,5 +1284,13 @@ const styles = StyleSheet.create({
   checkbox: { width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: '#CBD5E1', justifyContent: 'center', alignItems: 'center' },
   checkboxChecked: { backgroundColor: '#10B981', borderColor: '#10B981' },
   floatingPrintBtn: { backgroundColor: '#4F46E5', padding: 16, borderRadius: 16, alignItems: 'center', marginTop: 10, shadowColor: '#4F46E5', shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 },
-  floatingPrintText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 }
+  floatingPrintText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
+  modalContentSmall: { width: '100%', backgroundColor: '#FFFFFF', padding: 24, borderRadius: 20, elevation: 10 },
+
+  /* 🚀 STYLES POUR LA GRILLE DE MOIS MULTIPLES */
+  moisGrid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 15 },
+  moisChip: { paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#F1F5F9', borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0', width: '23%', alignItems: 'center', marginRight: '2%', marginBottom: 8 },
+  moisChipActive: { backgroundColor: '#4F46E5', borderColor: '#4F46E5' },
+  moisChipText: { fontSize: 13, color: '#475569', fontWeight: '600' },
+  moisChipTextActive: { color: '#FFFFFF', fontWeight: 'bold' }
 });

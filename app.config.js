@@ -47,7 +47,7 @@ export default {
     icon: currentConfig.icon,
     ios: { 
       bundleIdentifier: currentConfig.bundleId,
-      buildNumber: "6",
+      buildNumber: "7",
       // 🚀 AJOUT DE LA CONFIGURATION D'EXPORTATION APPLE :
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false
@@ -55,7 +55,7 @@ export default {
     },
     android: { 
       package: currentConfig.bundleId,
-      versionCode: 5,
+      versionCode: 6,
       googleServicesFile: "./google-services.json" 
     },
     extra: {

@@ -1,7 +1,7 @@
 import { Picker } from '@react-native-picker/picker';
 import { decode } from 'base64-arraybuffer';
 import * as ImagePicker from 'expo-image-picker';
-import * as WebBrowser from 'expo-web-browser'; // 🚀 IMPORT AJOUTÉ POUR iOS
+import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -55,7 +55,31 @@ export default function MurAdminScreen() {
       .or(`date_expiration.is.null,date_expiration.gte.${now}`)
       .order('date_creation', { ascending: false });
       
-    if (data) setPublications(data);
+    if (data) {
+      // 🚀 TRI : D'abord les publications épinglées, puis ordre chronologique
+      const sortedData = data.sort((a, b) => {
+        if (a.epingle && !b.epingle) return -1;
+        if (!a.epingle && b.epingle) return 1;
+        return new Date(b.date_creation) - new Date(a.date_creation);
+      });
+      setPublications(sortedData);
+    }
+  };
+
+  // 🚀 FONCTION POUR ÉPINGLER/DÉPINGLER UNE PUBLICATION
+  const toggleEpinglePublication = async (post) => {
+    try {
+      const nouvelEtat = !post.epingle;
+      const { error } = await supabase
+        .from('publications')
+        .update({ epingle: nouvelEtat })
+        .eq('id', post.id);
+
+      if (error) throw error;
+      fetchPublications(); // Rafraîchit la liste
+    } catch (err) {
+      Alert.alert("Erreur", "Impossible de modifier l'épingle.");
+    }
   };
 
   const choisirPhotos = async () => {
@@ -385,7 +409,7 @@ export default function MurAdminScreen() {
     const vuesCount = item.vues_publications ? item.vues_publications.length : 0;
     
     return (
-      <View style={styles.postCard}>
+      <View style={[styles.postCard, item.epingle && { borderColor: '#4F46E5', borderWidth: 2 }]}>
         <View style={styles.postHeader}>
           <View style={styles.postHeaderLeft}>
             <View style={styles.avatar}><Text style={styles.avatarText}>🏫</Text></View>
@@ -394,9 +418,16 @@ export default function MurAdminScreen() {
               <Text style={styles.postTime}>{formaterDate(item.date_creation)}</Text>
             </View>
           </View>
-          <TouchableOpacity style={styles.deleteBtn} onPress={() => demanderSuppression(item.id, item.media_url)}>
-            <Text style={styles.deleteBtnText}>🗑️</Text>
-          </TouchableOpacity>
+          
+          {/* 🚀 BOUTONS ÉPINGLE & SUPPRIMER */}
+          <View style={{flexDirection: 'row', alignItems: 'center'}}>
+            <TouchableOpacity style={styles.pinBtn} onPress={() => toggleEpinglePublication(item)}>
+              <Text style={styles.pinBtnText}>{item.epingle ? '📌' : '📍'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.deleteBtn} onPress={() => demanderSuppression(item.id, item.media_url)}>
+              <Text style={styles.deleteBtnText}>🗑️</Text>
+            </TouchableOpacity>
+          </View>
         </View>
         
         {imageUrls.length > 0 && (
@@ -407,13 +438,11 @@ export default function MurAdminScreen() {
                 const cleanUrl = isVideo ? url.replace('video:', '') : url;
 
                 if (isVideo) {
-                  // 🚀 MAGIE : On extrait l'ID de la vidéo Drive pour générer sa miniature
                   const videoIdMatch = cleanUrl.match(/file\/d\/([a-zA-Z0-9_-]+)/);
                   const videoId = videoIdMatch ? videoIdMatch[1] : null;
                   const thumbnailUrl = videoId ? `https://drive.google.com/thumbnail?id=${videoId}&sz=w800` : null;
 
                   return (
-                    // 🚀 NOUVELLE FONCTION SUR LE ONPRESS
                     <TouchableOpacity key={idx} activeOpacity={0.9} onPress={() => ouvrirVideoDrive(cleanUrl)}>
                       <View style={{position: 'relative'}}>
                         {thumbnailUrl ? (
@@ -421,7 +450,6 @@ export default function MurAdminScreen() {
                         ) : (
                           <View style={[styles.postMultiImage, { backgroundColor: '#1E293B' }]} />
                         )}
-                        {/* CALQUE AVEC BOUTON PLAY AU MILIEU */}
                         <View style={styles.playOverlay}>
                           <View style={styles.playCircle}>
                             <Text style={styles.playTriangle}>▶</Text>
@@ -432,7 +460,6 @@ export default function MurAdminScreen() {
                   );
                 }
 
-                // SI C'EST UNE IMAGE CLASSIQUE
                 return (
                   <Image key={idx} source={{ uri: url }} style={styles.postMultiImage} resizeMode="contain" />
                 );
@@ -559,16 +586,19 @@ const styles = StyleSheet.create({
   avatarText: { fontSize: 20 },
   postAuthor: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
   postTime: { fontSize: 12, color: '#64748B', marginTop: 2, fontWeight: '500' },
+  
+  // 🚀 BOUTONS HEADER CARD
+  pinBtn: { padding: 8, backgroundColor: '#F8FAFC', borderRadius: 12, marginRight: 8, borderWidth: 1, borderColor: '#E2E8F0' },
+  pinBtnText: { fontSize: 14 },
   deleteBtn: { padding: 8, backgroundColor: '#FEF2F2', borderRadius: 12 },
   deleteBtnText: { fontSize: 14 },
   
   multiImageContainer: { position: 'relative', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#F1F5F9', backgroundColor: '#F8FAFC' }, 
   postMultiImage: { width: screenWidth - 32, height: 300 }, 
   
-  // 🚀 NOUVEAUX STYLES POUR LA MINIATURE VIDÉO
   playOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.2)' },
   playCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFFFFF' },
-  playTriangle: { color: '#FFFFFF', fontSize: 26, marginLeft: 4 }, // marginLeft pour centrer optiquement le triangle
+  playTriangle: { color: '#FFFFFF', fontSize: 26, marginLeft: 4 }, 
 
   multiBadge: { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 },
   multiBadgeText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
