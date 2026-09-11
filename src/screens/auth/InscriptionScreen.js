@@ -9,7 +9,7 @@ export default function InscriptionScreen({ navigation }) {
   const [telephone, setTelephone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [codeSuffix, setCodeSuffix] = useState(''); // Modified to store only the part after FAM-
+  const [codeSuffix, setCodeSuffix] = useState('');
   const [remarquesMedicales, setRemarquesMedicales] = useState('');
   const [loading, setLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -32,11 +32,32 @@ export default function InscriptionScreen({ navigation }) {
     
     setLoading(true);
     try {
+      // 1. FORMATER LE CODE
+      const codeNettoye = `FAM-${codeSuffix.trim().toUpperCase()}`;
+
+      // 🚀 2. NOUVEAU : VÉRIFIER L'EXISTENCE DU CODE AVANT LA CRÉATION
+      const { data: enfantsExistants, error: verifError } = await supabase
+        .from('enfants')
+        .select('id')
+        .eq('code_parent', codeNettoye);
+
+      if (verifError) throw new Error(verifError.message);
+
+      // Si le code n'existe pas dans la base de données, on bloque l'inscription
+      if (!enfantsExistants || enfantsExistants.length === 0) {
+        alert(`Le code famille ${codeNettoye} est introuvable. Veuillez demander le bon code à la direction.`);
+        setLoading(false);
+        return; 
+      }
+
+      // 3. LE CODE EST VALIDE, ON CRÉE LE COMPTE
       const { data: authData, error: authError } = await supabase.auth.signUp({ email: email.trim(), password: password });
       if (authError) throw new Error(authError.message);
       
       if (authData.user) {
         const userId = authData.user.id;
+        
+        // 4. INSERTION DE L'UTILISATEUR
         const { error: dbError } = await supabase.from('utilisateurs').insert([{ 
           id: userId, 
           email: email.trim(), 
@@ -47,18 +68,15 @@ export default function InscriptionScreen({ navigation }) {
         }]);
         if (dbError) throw new Error(dbError.message);
         
-        // Construct the full code family
-        const codeNettoye = `FAM-${codeSuffix.trim().toUpperCase()}`;
+        // 5. LIAISON AVEC LES ENFANTS
         const enfantsUpdateData = { parent_id: userId };
         if (remarquesMedicales.trim() !== '') enfantsUpdateData.remarques_medicales = remarquesMedicales;
         
         await supabase.from('enfants').update(enfantsUpdateData).eq('code_parent', codeNettoye);
         
-        const { data: enfantsLies } = await supabase.from('enfants').select('id').eq('code_parent', codeNettoye);
-        if (enfantsLies && enfantsLies.length > 0) {
-          const enfantIds = enfantsLies.map(e => e.id);
-          await supabase.from('paiements').update({ parent_id: userId }).in('enfant_id', enfantIds);
-        }
+        // 6. LIAISON AVEC LES PAIEMENTS
+        const enfantIds = enfantsExistants.map(e => e.id); // On réutilise les IDs trouvés à l'étape 2
+        await supabase.from('paiements').update({ parent_id: userId }).in('enfant_id', enfantIds);
         
         await supabase.auth.signOut();
         setIsSuccess(true);
@@ -90,7 +108,7 @@ export default function InscriptionScreen({ navigation }) {
           </TouchableOpacity>
         </View>
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Developped by Abderrahim S © 2026</Text>
+          <Text style={styles.footerText}>Developped by A S © 2026</Text>
         </View>
       </SafeAreaView>
     );
@@ -192,7 +210,7 @@ export default function InscriptionScreen({ navigation }) {
 
           {/* FOOTER SIGNATURE */}
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Developped by Abderrahim S © 2026</Text>
+            <Text style={styles.footerText}>Developped by A S © 2026</Text>
           </View>
 
         </ScrollView>

@@ -36,7 +36,10 @@ export default function GestionUtilisateursScreen() {
   const fetchUtilisateurs = async () => {
     const { data, error } = await supabase
       .from('utilisateurs')
-      .select('*')
+      .select(`
+        *,
+        enfants ( code_parent )
+      `)
       .order('date_creation', { ascending: false });
     
     if (!error && data) setUtilisateurs(data);
@@ -264,16 +267,21 @@ export default function GestionUtilisateursScreen() {
   const executerSuppressionParent = async (user) => {
     setLoading(true);
     try {
+      let codeFamille = user.code_parent;
+      if (!codeFamille && user.enfants && user.enfants.length > 0) {
+        codeFamille = user.enfants[0].code_parent;
+      }
+
       await supabase.from('paiements').delete().eq('parent_id', user.id);
 
-      if (user.code_parent) {
-        const { data: kids } = await supabase.from('enfants').select('id').eq('code_parent', user.code_parent);
+      if (codeFamille) {
+        const { data: kids } = await supabase.from('enfants').select('id').eq('code_parent', codeFamille);
         if (kids && kids.length > 0) {
           const kidIds = kids.map(k => k.id);
           await supabase.from('paiements').delete().in('enfant_id', kidIds);
         }
-        await supabase.from('enfants').delete().eq('code_parent', user.code_parent);
-        await supabase.from('familles').delete().eq('code_parent', user.code_parent);
+        await supabase.from('enfants').delete().eq('code_parent', codeFamille);
+        await supabase.from('familles').delete().eq('code_parent', codeFamille);
       }
 
       const { error } = await supabase.from('utilisateurs').delete().eq('id', user.id);
@@ -324,6 +332,11 @@ export default function GestionUtilisateursScreen() {
     const isParent = item.role === 'parent' || item.role === 'suspendu';
     const isSuspended = item.role === 'suspendu';
 
+    let codeFamille = item.code_parent;
+    if (!codeFamille && item.enfants && item.enfants.length > 0) {
+      codeFamille = item.enfants[0].code_parent;
+    }
+
     return (
       <View style={[styles.card, isStaff && styles.cardAdmin, isAttente && styles.cardAttente, isSuspended && styles.cardSuspended]}>
         <View style={styles.cardHeader}>
@@ -341,7 +354,7 @@ export default function GestionUtilisateursScreen() {
         <View style={styles.contactInfo}>
           <Text style={styles.contactText}>📞 {item.telephone || 'Non renseigné'}</Text>
           <Text style={styles.contactText}>✉️ {item.email || 'Email non renseigné'}</Text>
-          <Text style={styles.contactText}>🔑 Famille : {item.code_parent || 'Non lié'}</Text>
+          <Text style={styles.contactText}>🔑 Famille : {codeFamille || 'Non lié'}</Text>
           {isStaff && (
             <Text style={styles.contactTextPin}>🔑 PIN Pointage : {item.pin_pointage || 'Non défini'}</Text>
           )}

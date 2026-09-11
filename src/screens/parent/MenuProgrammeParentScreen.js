@@ -1,128 +1,1120 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { useFocusEffect } from '@react-navigation/native';
 import Constants from 'expo-constants';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import * as Device from 'expo-device';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as ImagePicker from 'expo-image-picker';
+import * as Notifications from 'expo-notifications';
+import * as Sharing from 'expo-sharing';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Dimensions, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../services/supabaseClient';
 
+const decodeBase64 = (base64) => {
+  const binaryString = window.atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+};
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+const { width: screenWidth } = Dimensions.get('window');
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+const logoAssets = {
+  jeupousse: require('../../../assets/images/jeupousse/icon.png'),
+  demo: require('../../../assets/images/demo/icon.png'),
+};
+
 const themes = {
-  jeupousse: { primary: '#E91E63', background: '#F8FAFC' },
-  demo: { primary: '#2196F3', background: '#E3F2FD' }
+  jeupousse: { primary: '#E91E63', background: '#F8FAFC', buttonText: '#FFFFFF' },
+  demo: { primary: '#2196F3', background: '#E3F2FD', buttonText: '#FFFFFF' }
 };
 
-const getLundiDate = (d) => {
-  const date = new Date(d);
-  const day = date.getDay();
-  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
-  const lundi = new Date(date.setDate(diff));
-  return lundi.toISOString().split('T')[0];
+const ordreMoisScolaire = {
+  'Septembre': 1, 'Octobre': 2, 'Novembre': 3, 'Décembre': 4,
+  'Janvier': 5, 'Février': 6, 'Mars': 7, 'Avril': 8, 'Mai': 9,
+  'Juin': 10, 'Juillet': 11, 'Août': 12
 };
 
-export default function MenuProgrammeParentScreen() {
+export default function DashboardParentScreen({ navigation }) {
+  const [activeTab, setActiveTab] = useState('mur'); 
+  const [parentNom, setParentNom] = useState('');
+  const [nomCreche, setNomCreche] = useState(Constants.expoConfig?.name || 'Ma Crèche');
+  const [publications, setPublications] = useState([]);
+  const [enfants, setEnfants] = useState([]);
+  const [factures, setFactures] = useState([]); 
+  const [banques, setBanques] = useState([]); 
   const [loading, setLoading] = useState(true);
-  const [currentWeekMonday, setCurrentWeekMonday] = useState(getLundiDate(new Date()));
-  const [donnees, setDonnees] = useState(null);
+  const [loadingDownload, setLoadingDownload] = useState(false); 
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [cahiersJour, setCahiersJour] = useState({}); 
+  const [statutAttestations, setStatutAttestations] = useState({});
+
+  const [alertesMedicales, setAlertesMedicales] = useState([]);
+  const [recuperationsSOS, setRecuperationsSOS] = useState({});
+  const [absencesKids, setAbsencesKids] = useState({}); 
+  const [progresKids, setProgresKids] = useState({});
+
+  const [modalAbsenceVisible, setModalAbsenceVisible] = useState(false);
+  const [absenceDate, setAbsenceDate] = useState('');
+  const [absenceDateObj, setAbsenceDateObj] = useState(new Date());
+  const [showAbsenceDatePicker, setShowAbsenceDatePicker] = useState(false);
+  const [absenceMotif, setAbsenceMotif] = useState('');
+  
+  const [modalSOSVisible, setModalSOSVisible] = useState(false);
+  const [sosNom, setSosNom] = useState('');
+  const [sosCin, setSosCin] = useState('');
+
+  const [menus, setMenus] = useState([]);
+  const [documents, setDocuments] = useState([]);
+  const [activeRessourceTab, setActiveRessourceTab] = useState('menus'); 
+
+  const [modalMedicalVisible, setModalMedicalVisible] = useState(false);
+  const [enfantSelectionne, setEnfantSelectionne] = useState(null);
+  const [remarqueTemp, setRemarqueTemp] = useState('');
+
+  const [modalPaiementVisible, setModalPaiementVisible] = useState(false);
+  const [factureAPayer, setFactureAPayer] = useState(null);
+  const [recuUri, setRecuUri] = useState(null);
+  const [recuBase64, setRecuBase64] = useState(null);
+  const [uploadingRecu, setUploadingRecu] = useState(false);
+
+  const [modalImageVisible, setModalImageVisible] = useState(false);
+  const [imageView, setImageView] = useState(null);
+
+  const [notifTokenStatus, setNotifTokenStatus] = useState('Vérification...');
+  const [syncLoading, setSyncLoading] = useState(false);
 
   const crecheId = Constants.expoConfig?.extra?.crecheId || 'jeupousse';
+  const selectedLogo = logoAssets[crecheId] || logoAssets.jeupousse;
   const currentTheme = themes[crecheId] || themes.jeupousse;
 
-  useEffect(() => { chargerSemaine(); }, [currentWeekMonday]);
+  useEffect(() => { 
+    chargerParametres(); 
+    chargerDonneesParent(); 
+    chargerMur(); 
+    chargerBanques(); 
+    chargerRessources(); 
+    verifierTokenStatus();
+    if (Platform.OS !== 'web') enregistrerNotificationsNatives();
 
-  const chargerSemaine = async () => {
-    setLoading(true);
-    setDonnees(null);
+    const realtimeChannel = supabase.channel('parent_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'alertes_medicales' }, () => { chargerDonneesParent(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cahier_liaison' }, () => { chargerDonneesParent(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'progres_enfants' }, () => { chargerDonneesParent(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'enfants' }, () => { chargerDonneesParent(); }) 
+      // 🚀 AJOUT TRÈS IMPORTANT : On écoute les changements du mur (épingles) en temps réel !
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'publications' }, () => { chargerMur(); })
+      .subscribe();
+
+    return () => { if (realtimeChannel) supabase.removeChannel(realtimeChannel); };
+  }, []);
+
+  useFocusEffect(React.useCallback(() => { calculerMessagesNonLus(); }, []));
+
+  const chargerParametres = async () => {
     try {
-      const { data } = await supabase
-        .from('menu_programme_hebdo')
-        .select('*')
-        .eq('date_lundi', currentWeekMonday)
-        .maybeSingle();
-      if (data) setDonnees(data);
-    } catch (e) {
-      console.log(e);
-    } finally {
-      setLoading(false);
+      const { data } = await supabase.from('parametres').select('cle, valeur').in('cle', ['nom_creche']);
+      if (data) { const nom = data.find(p => p.cle === 'nom_creche')?.valeur; if (nom) setNomCreche(nom); }
+    } catch (e) { console.log(e); }
+  };
+
+  const verifierTokenStatus = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase.from('utilisateurs').select('expo_push_token, web_push_sub').eq('id', user.id).single();
+      if (Platform.OS === 'web') setNotifTokenStatus(data?.web_push_sub ? '🟢 Web Push Actif' : '❌ Non configuré');
+      else setNotifTokenStatus(data?.expo_push_token ? '🟢 Mobile Push Actif' : '❌ Non configuré');
+    } catch (e) { setNotifTokenStatus('⚠️ Indisponible'); }
+  };
+
+  const enregistrerNotificationsNatives = async () => {
+    if (Platform.OS === 'android') await Notifications.setNotificationChannelAsync('default', { name: 'default', importance: Notifications.AndroidImportance.MAX });
+    if (Device.isDevice) {
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== 'granted') { const { status } = await Notifications.requestPermissionsAsync(); finalStatus = status; }
+      if (finalStatus !== 'granted') { setNotifTokenStatus('❌ Permissions refusées'); return; }
+      try {
+        const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+        const tokenData = await Notifications.getExpoPushTokenAsync({ projectId: projectId });
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) { await supabase.from('utilisateurs').update({ expo_push_token: tokenData.data }).eq('id', user.id); setNotifTokenStatus('🟢 Mobile Push Actif'); }
+      } catch (error) { setNotifTokenStatus('❌ Échec génération'); }
+    } else { setNotifTokenStatus('💻 Simulateur (Pas de Push)'); }
+  };
+
+  const forcerSynchronisationAppareil = async () => {
+    setSyncLoading(true);
+    try {
+      if (Platform.OS === 'web') await demanderNotificationsWeb(); else await enregistrerNotificationsNatives();
+      await verifierTokenStatus(); Alert.alert("Synchronisation réussie", "Votre téléphone actuel a été correctement enregistré pour recevoir les alertes de la crèche.");
+    } catch (e) { Alert.alert("Erreur", "La resynchronisation a échoué."); } finally { setSyncLoading(false); }
+  };
+
+  const handleSecureLogout = async () => {
+    const executerDeconnexion = async () => {
+      try {
+        setLoading(true); const { data: { user } } = await supabase.auth.getUser();
+        if (user) await supabase.from('utilisateurs').update({ expo_push_token: null, web_push_sub: null }).eq('id', user.id);
+        await supabase.auth.signOut(); navigation.replace('Login'); 
+      } catch (error) { if (Platform.OS === 'web') window.alert("Erreur de déconnexion"); else Alert.alert("Erreur", "Impossible de se déconnecter."); setLoading(false); }
+    };
+    if (Platform.OS === 'web') { if (window.confirm("Voulez-vous vraiment vous déconnecter ?")) executerDeconnexion(); } 
+    else { Alert.alert("Déconnexion", "Voulez-vous vraiment vous déconnecter ?", [{ text: "Annuler", style: "cancel" }, { text: "Oui", style: "destructive", onPress: executerDeconnexion }]); }
+  };
+
+  const handleDeleteAccount = () => {
+    if (Platform.OS === 'web') {
+      if (window.confirm("Êtes-vous sûr de vouloir supprimer définitivement votre compte et toutes vos données ? Cette action est irréversible.")) {
+        window.alert("Votre demande de suppression a été transmise à l'administration de la crèche. Votre compte sera clôturé sous 48h.");
+        handleSecureLogout();
+      }
+    } else {
+      Alert.alert(
+        "Supprimer le compte",
+        "Êtes-vous sûr de vouloir supprimer définitivement votre compte et toutes vos données ? Cette action est irréversible.",
+        [
+          { text: "Annuler", style: "cancel" },
+          {
+            text: "Oui, supprimer",
+            style: "destructive",
+            onPress: () => {
+              Alert.alert(
+                "Demande envoyée",
+                "Pour des raisons de sécurité liées à la crèche, votre demande de suppression a été transmise à l'administration. Votre compte sera clôturé sous 48h.",
+                [{ text: "OK", onPress: () => handleSecureLogout() }]
+              );
+            }
+          }
+        ]
+      );
     }
   };
 
-  const naviguerSemaine = (jours) => {
-    const dateAlternative = new Date(currentWeekMonday);
-    dateAlternative.setDate(dateAlternative.getDate() + jours);
-    setCurrentWeekMonday(getLundiDate(dateAlternative));
+  const demanderNotificationsWeb = async () => {
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') return Alert.alert("Permission", "Veuillez autoriser les notifications.");
+      const registration = await navigator.serviceWorker.register('/custom-service-worker.js');
+      const PUBLIC_VAPID_KEY = 'BI_Tzccj4plYD_YX6ssnZ3K5PMpgo4pEjd-DOMNG1vriOzJo_Dvs45Q4la7UhCqRWjWxfQdOVlLSaYLK8tryZwY'; 
+      const pushSubscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY) });
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) { await supabase.from('utilisateurs').update({ web_push_sub: JSON.stringify(pushSubscription) }).eq('id', user.id); setNotifTokenStatus('🟢 Web Push Actif'); }
+    } catch (error) { Alert.alert("Erreur", error.message); }
   };
 
-  const formaterAffichageSemaine = () => {
-    const l = new Date(currentWeekMonday);
-    const v = new Date(currentWeekMonday);
-    v.setDate(v.getDate() + 4);
-    return `Du ${l.getDate()} au ${v.getDate()} ${v.toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })}`;
+  const chargerRessources = async () => {
+    const { data: menusData } = await supabase.from('menus_cantine').select('*').order('semaine_du', { ascending: false }); if (menusData) setMenus(menusData);
+    const { data: docsData } = await supabase.from('documents_utiles').select('*').order('date_ajout', { ascending: false }); if (docsData) setDocuments(docsData);
   };
 
-  const JourMenu = ({ jour, menu }) => {
-    if (!menu) return null;
-    return (
-      <View style={styles.dayCard}>
-        <Text style={[styles.dayTitle, { color: currentTheme.primary }]}>{jour}</Text>
-        <Text style={styles.dayContent}>{menu}</Text>
-      </View>
-    );
+  const calculerMessagesNonLus = async () => {
+    const { data: { user } } = await supabase.auth.getUser(); if (!user) return;
+    const { data: userData = {} } = await supabase.from('utilisateurs').select('derniere_lecture_messagerie').eq('id', user.id).single();
+    const derniereLecture = userData?.derniere_lecture_messagerie || '2000-01-01T00:00:00.000Z';
+    const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true }).eq('destinataire_id', user.id).gt('date_creation', derniereLecture);
+    setUnreadCount(count || 0);
   };
+
+  const marquerCommeVu = async (publicationId) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser(); if (!user) return;
+      const { data: vueExistante } = await supabase.from('vues_publications').select('id').eq('publication_id', publicationId).eq('utilisateur_id', user.id).maybeSingle(); 
+      if (!vueExistante) await supabase.from('vues_publications').insert([{ publication_id: publicationId, utilisateur_id: user.id }]);
+    } catch (error) { console.log("Erreur vue silencieuse :", error.message); }
+  };
+
+  // 🚀 TRI DES PUBLICATIONS : Les épinglées D'ABORD, puis par date
+  const chargerMur = async () => {
+    try {
+      const { data } = await supabase.from('publications').select('*').order('date_creation', { ascending: false });
+      if (data) {
+        const now = new Date();
+        const publicationsValides = data.filter(post => !post.date_expiration || new Date(post.date_expiration) >= now);
+        
+        const publicationsTriees = publicationsValides.sort((a, b) => {
+          if (a.epingle && !b.epingle) return -1;
+          if (!a.epingle && b.epingle) return 1;
+          return new Date(b.date_creation) - new Date(a.date_creation);
+        });
+
+        setPublications([...publicationsTriees]);
+      }
+    } catch (e) { console.log(e.message); }
+  };
+
+  const chargerBanques = async () => { const { data } = await supabase.from('comptes_bancaires').select('*'); if (data) setBanques(data); };
+
+  const chargerDonneesParent = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser(); if (!user) return;
+      const { data: profil } = await supabase.from('utilisateurs').select('prenom').eq('id', user.id).single(); if (profil) setParentNom(profil.prenom);
+      
+      const { data: mesEnfants } = await supabase.from('enfants').select('*, inscrit_transport, heure_ramassage, point_ramassage').eq('parent_id', user.id);
+      let enfantIds = [];
+      
+      if (mesEnfants && mesEnfants.length > 0) {
+        setEnfants(mesEnfants); enfantIds = mesEnfants.map(e => e.id); const dateJour = new Date().toISOString().split('T')[0];
+        
+        const { data: cahiers } = await supabase.from('cahier_liaison').select('*').in('enfant_id', enfantIds).eq('date_jour', dateJour);
+        if (cahiers) { const cahiersMap = {}; cahiers.forEach(c => { cahiersMap[c.enfant_id] = c; }); setCahiersJour(cahiersMap); }
+
+        const { data: alertes } = await supabase.from('alertes_medicales').select('*, enfants(prenom)').in('enfant_id', enfantIds).eq('statut_regle', false);
+        if (alertes) setAlertesMedicales(alertes);
+
+        const { data: sosActive } = await supabase.from('recuperations_sos').select('*').in('enfant_id', enfantIds).is('date_validation', null);
+        if (sosActive) { const sosMap = {}; sosActive.forEach(s => { sosMap[s.enfant_id] = s; }); setRecuperationsSOS(sosMap); }
+
+        const { data: absences } = await supabase.from('planning_presences').select('*').in('enfant_id', enfantIds).order('date_absence', { ascending: false });
+        if (absences) { const absMap = {}; absences.forEach(a => { if (!absMap[a.enfant_id]) absMap[a.enfant_id] = []; absMap[a.enfant_id].push(a); }); setAbsencesKids(absMap); }
+
+        const ilYa24Heures = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const { data: progres } = await supabase
+          .from('progres_enfants')
+          .select('*')
+          .in('enfant_id', enfantIds)
+          .gte('date_creation', ilYa24Heures)
+          .order('date_creation', { ascending: false });
+
+        if (progres) { 
+          const progMap = {}; 
+          progres.forEach(p => { if (!progMap[p.enfant_id]) progMap[p.enfant_id] = []; progMap[p.enfant_id].push(p); }); 
+          setProgresKids(progMap); 
+        }
+
+        const { data: attestations } = await supabase.from('demandes_attestation').select('*').in('enfant_id', enfantIds).order('date_demande', { ascending: false }); 
+        if (attestations) { const attMap = {}; attestations.forEach(att => { if (!attMap[att.enfant_id]) attMap[att.enfant_id] = att.statut; }); setStatutAttestations(attMap); }
+      }
+
+      let queryFactures = supabase.from('paiements').select('*, enfants(prenom)').order('date_creation', { ascending: false });
+      if (enfantIds.length > 0) queryFactures = queryFactures.or(`parent_id.eq.${user.id},enfant_id.in.(${enfantIds.join(',')})`); else queryFactures = queryFactures.eq('parent_id', user.id);
+      const { data: mesFactures } = await queryFactures; if (mesFactures) setFactures(mesFactures);
+    } catch (error) { console.error("Erreur Dashboard:", error); } finally { setLoading(false); }
+  };
+
+  const fermerAlerteMedicale = async (alerteId) => {
+    try { await supabase.from('alertes_medicales').update({ statut_regle: true }).eq('id', alerteId); setAlertesMedicales(prev => prev.filter(a => a.id !== alerteId)); } catch (e) { console.log(e); }
+  };
+
+  const handleAbsenceDateChange = (event, selectedDate) => {
+    if (Platform.OS === 'android') setShowAbsenceDatePicker(false);
+    if (selectedDate) {
+      setAbsenceDateObj(selectedDate);
+      const y = selectedDate.getFullYear(); const m = String(selectedDate.getMonth() + 1).padStart(2, '0'); const d = String(selectedDate.getDate()).padStart(2, '0');
+      setAbsenceDate(`${y}-${m}-${d}`);
+    }
+  };
+
+  const déclarerAbsence = async () => {
+    if (!absenceDate || !absenceMotif) { Alert.alert("Champs requis", "Veuillez sélectionner la date et le motif de l'absence."); return; }
+    try {
+      const { error } = await supabase.from('planning_presences').insert([{ enfant_id: enfantSelectionne.id, date_absence: absenceDate, motif: absenceMotif, statut: 'Prévu' }]);
+      if (error) throw error;
+      Alert.alert("Absence enregistrée", `L'absence de ${enfantSelectionne.prenom} a été déclarée.`);
+      setModalAbsenceVisible(false); setAbsenceDate(''); setAbsenceMotif(''); setAbsenceDateObj(new Date()); chargerDonneesParent(); 
+    } catch(e) { Alert.alert("Erreur", "Une absence est déjà déclarée pour ce jour."); }
+  };
+
+  const genererCodeSOS = async () => {
+    if (!sosNom || !sosCin) { Alert.alert("Champs requis", "Veuillez saisir le nom complet et la CIN."); return; }
+    try {
+      const codeUnique = 'SOS-' + Math.floor(100000 + Math.random() * 900000);
+      const { error } = await supabase.from('recuperations_sos').insert([{ enfant_id: enfantSelectionne.id, nom_tierce_personne: sosNom, cin_tierce: sosCin, code_unique: codeUnique }]);
+      if (error) throw error;
+      Alert.alert("Code SOS Créé 🛡️", `Le code sécurisé est : ${codeUnique}\nDonnez ce code à la personne choisie.`);
+      setModalSOSVisible(false); setSosNom(''); setSosCin(''); chargerDonneesParent();
+    } catch(e) { Alert.alert("Erreur", "Impossible de générer le code."); }
+  };
+
+  const ouvrirModalMedical = (enfant) => { setEnfantSelectionne(enfant); setRemarqueTemp(enfant.details_allergie || enfant.remarques_medicales || ''); setModalMedicalVisible(true); };
+  const sauvegarderMedical = async () => {
+    setLoading(true);
+    try {
+      await supabase.from('enfants').update({ remarques_medicales: remarqueTemp, details_allergie: remarqueTemp, a_allergie: remarqueTemp.length > 0 }).eq('id', enfantSelectionne.id);
+      const { data: admin } = await supabase.from('utilisateurs').select('id').eq('role', 'admin').single();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (admin) await supabase.from('messages').insert([{ expediteur_id: user.id, destinataire_id: admin.id, texte: `Le parent a mis à jour les informations de régime alimentaire/santé de ${enfantSelectionne.prenom}.` }]);
+      Alert.alert("Succès", "Informations mises à jour."); setModalMedicalVisible(false); chargerDonneesParent();
+    } catch (error) { Alert.alert("Erreur", error.message); } finally { setLoading(false); }
+  };
+
+  const envoyerDemandeScolarite = async (enfant) => {
+    setLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: existante } = await supabase.from('demandes_attestation').select('id').eq('enfant_id', enfant.id).eq('statut', 'en_attente');
+      if (existante && existante.length > 0) { Alert.alert("Info", "Demande déjà en cours."); setLoading(false); return; }
+      await supabase.from('demandes_attestation').insert([{ enfant_id: enfant.id, parent_id: user.id, statut: 'en_attente' }]);
+      setStatutAttestations(prev => ({ ...prev, [enfant.id]: 'en_attente' })); Alert.alert("Succès", "Demande envoyée.");
+    } catch (error) { Alert.alert("Erreur", error.message); } finally { setLoading(false); }
+  };
+
+  const choisirRecu = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.6, base64: true });
+    if (!result.canceled) { setRecuUri(result.assets[0].uri); setRecuBase64(result.assets[0].base64); }
+  };
+
+  const envoyerRecu = async () => {
+    if (!recuBase64) { alert("Veuillez sélectionner un reçu."); return; }
+    setUploadingRecu(true);
+    try {
+      const fileName = `recu_${factureAPayer.id}_${Date.now()}.jpg`;
+      const binaryData = decodeBase64(recuBase64);
+      const { error: uploadError } = await supabase.storage.from('recus_paiements').upload(fileName, binaryData, { contentType: 'image/jpeg' });
+      if (uploadError) throw uploadError;
+      const { data: publicUrlData } = supabase.storage.from('recus_paiements').getPublicUrl(fileName);
+      await supabase.from('paiements').update({ statut: 'en_verification', recu_url: publicUrlData.publicUrl }).eq('id', factureAPayer.id);
+      Alert.alert("Merci !", "Reçu envoyé."); setModalPaiementVisible(false); chargerDonneesParent();
+    } catch (error) { alert("Erreur : " + error.message); } finally { setUploadingRecu(false); }
+  };
+
+  const telechargerPhotoOriginale = async (url) => {
+    if (Platform.OS === 'web') { Linking.openURL(url); return; }
+    setLoadingDownload(true);
+    try {
+      const fileName = `photo_creche_${Date.now()}.jpg`;
+      const localUri = FileSystem.documentDirectory + fileName;
+      const { uri } = await FileSystem.downloadAsync(url, localUri);
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'image/jpeg' });
+    } catch (error) { Alert.alert("Erreur", error.message); } finally { setLoadingDownload(false); }
+  };
+
+  if (loading && enfants.length === 0) { return (<View style={[styles.center, { backgroundColor: currentTheme.background }]}><ActivityIndicator size="large" color={currentTheme.primary} /></View>); }
+
+  const trierFactures = (a, b) => {
+    const aIsInsc = a.type === 'inscription' || (a.titre || '').toLowerCase().includes("inscription");
+    const bIsInsc = b.type === 'inscription' || (b.titre || '').toLowerCase().includes("inscription");
+    if (aIsInsc && !bIsInsc) return -1;
+    if (!aIsInsc && bIsInsc) return 1;
+
+    const ordreA = ordreMoisScolaire[a.mois] || 99;
+    const ordreB = ordreMoisScolaire[b.mois] || 99;
+    if (ordreA !== ordreB) return ordreA - ordreB;
+
+    return (a.titre || '').localeCompare(b.titre || '');
+  };
+
+  const facturesEnAttente = factures.filter(f => f.statut === 'en_attente').sort(trierFactures);
+  const facturesEnVerification = factures.filter(f => f.statut === 'en_verification').sort(trierFactures);
+  const facturesPayees = factures.filter(f => f.statut === 'paye').sort(trierFactures);
+
+  const moisNomsCal = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+  let countRetard = 0;
+  let countAPayer = 0;
+
+  facturesEnAttente.forEach(facture => {
+    let anneeScolaire = null;
+    const matchYear = facture.titre?.match(/\((\d{4}-\d{4})\)/);
+    if (matchYear && matchYear[1]) anneeScolaire = matchYear[1];
+    else if (facture.enfants?.annee_scolaire) anneeScolaire = facture.enfants.annee_scolaire;
+    else {
+      const d = new Date(facture.date_creation);
+      anneeScolaire = (d.getMonth() + 1) >= 8 ? `${d.getFullYear()}-${d.getFullYear()+1}` : `${d.getFullYear()-1}-${d.getFullYear()}`;
+    }
+
+    if (!anneeScolaire || !anneeScolaire.includes('-')) {
+      countAPayer++;
+      return;
+    }
+
+    const startYear = parseInt(anneeScolaire.split('-')[0], 10);
+    const moisIndexZero = moisNomsCal.indexOf(facture.mois); 
+    if (moisIndexZero === -1) {
+      countAPayer++; 
+      return;
+    }
+
+    const factureYear = moisIndexZero >= 8 ? startYear : startYear + 1;
+    const currentDate = new Date();
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth();
+
+    if (factureYear < currentYear) {
+      countRetard++;
+    } else if (factureYear > currentYear) {
+    } else {
+      if (moisIndexZero < currentMonth) countRetard++;
+      else if (moisIndexZero === currentMonth) countAPayer++;
+    }
+  });
+
+  const totalAlertes = countRetard + countAPayer;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: currentTheme.background }]} edges={['bottom', 'left', 'right']}>
-      <View style={styles.weekNavigator}>
-        <TouchableOpacity style={styles.navBtn} onPress={() => naviguerSemaine(-7)}><Text style={styles.navBtnText}>◀ Précédente</Text></TouchableOpacity>
-        <View style={styles.centerWeekText}>
-          <Text style={styles.weekDates}>{formaterAffichageSemaine()}</Text>
+    <SafeAreaView style={[styles.container, { backgroundColor: currentTheme.background }]} edges={['top', 'left', 'right', 'bottom']}>
+      <View style={styles.header}>
+        <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
+          <View style={{flexDirection: 'row', alignItems: 'center'}}>
+            <Image source={selectedLogo} style={{width: 50, height: 50, marginRight: 15, borderRadius: 10}} />
+            <View>
+              <Text style={[styles.crecheTitle, { color: currentTheme.primary }]}>{nomCreche}</Text>
+              <Text style={styles.subtitle}>Bonjour {parentNom} 👋</Text>
+            </View>
+          </View>
+          <View style={{alignItems: 'flex-end'}}>
+            <TouchableOpacity onPress={handleSecureLogout}><Text style={{color: currentTheme.primary, fontWeight: 'bold'}}>Déconnexion</Text></TouchableOpacity>
+          </View>
         </View>
-        <TouchableOpacity style={styles.navBtn} onPress={() => naviguerSemaine(7)}><Text style={styles.navBtnText}>Suivante ▶</Text></TouchableOpacity>
       </View>
 
-      {loading ? (
-        <View style={styles.center}><ActivityIndicator size="large" color={currentTheme.primary} /></View>
-      ) : !donnees ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyEmoji}>🍽️</Text>
-          <Text style={styles.emptyText}>Le programme de cette semaine n'a pas encore été publié par la crèche.</Text>
+      {alertesMedicales.length > 0 && (
+        <View style={styles.globalAlertBanner}>
+          {alertesMedicales.map(al => (
+            <View key={al.id} style={styles.alertRow}>
+              <Text style={styles.globalAlertBannerText}>⚠️ FLASH SANTE - {al.enfants?.prenom} : {al.type_alerte} {al.commentaire ? `(${al.commentaire})` : ''}</Text>
+              <TouchableOpacity style={styles.dismissAlertBtn} onPress={() => fermerAlerteMedicale(al.id)}><Text style={styles.dismissAlertText}>✖</Text></TouchableOpacity>
+            </View>
+          ))}
         </View>
-      ) : (
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContainer}>
-          <View style={styles.themeCard}>
-            <Text style={styles.themeHeader}>🎨 Thème de la semaine</Text>
-            <Text style={styles.themeTitle}>{donnees.theme_semaine}</Text>
-            {donnees.objectifs_pedagogiques ? (
-              <Text style={styles.themeDesc}>{donnees.objectifs_pedagogiques}</Text>
-            ) : null}
-          </View>
-
-          <Text style={styles.sectionMenuTitle}>🥦 Au menu de la cantine :</Text>
-          <JourMenu jour="LUNDI" menu={donnees.menu_lundi} />
-          <JourMenu jour="MARDI" menu={donnees.menu_mardi} />
-          <JourMenu jour="MERCREDI" menu={donnees.menu_mercredi} />
-          <JourMenu jour="JEUDI" menu={donnees.menu_jeudi} />
-          <JourMenu jour="VENDREDI" menu={donnees.menu_vendredi} />
-        </ScrollView>
       )}
+
+      {activeTab !== 'factures' && (
+        <TouchableOpacity 
+          style={[
+            styles.relanceBanner, 
+            countRetard > 0 ? { backgroundColor: '#EF4444' } : 
+            countAPayer > 0 ? { backgroundColor: '#F59E0B' } : 
+            { backgroundColor: '#10B981' }
+          ]} 
+          onPress={() => setActiveTab('factures')}
+        >
+          <Text style={styles.relanceText}>
+            {countRetard > 0 ? `⚠️ Vous avez ${countRetard} facture(s) en retard.` :
+             countAPayer > 0 ? `⏳ Vous avez ${countAPayer} facture(s) à payer.` :
+             `✅ Vos paiements sont à jour.`}
+          </Text>
+        </TouchableOpacity>
+      )}
+
+      <View style={styles.content}>
+        
+        {/* ONGLET 1: LE MUR */}
+        {activeTab === 'mur' && (
+          publications.length === 0 ? (
+            <View style={styles.emptyStateContainer}><Text style={{fontSize: 40}}>📭</Text><Text style={styles.emptyStateText}>Aucune publication sur le mur pour le moment.</Text></View>
+          ) : (
+            <FlatList 
+              data={publications} 
+              keyExtractor={(item) => item.id.toString()} 
+              showsVerticalScrollIndicator={false}
+              renderItem={({item}) => {
+                const imageUrls = item.media_url ? item.media_url.split(',') : [];
+                return (
+                  <View style={[styles.postContainer, {borderLeftColor: currentTheme.primary, borderLeftWidth: 4}]}>
+                    <View style={styles.postHeader}>
+                      <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                        <View style={styles.avatarCreche}><Text style={{fontSize: 18}}>🏫</Text></View>
+                        <View>
+                          {/* 🚀 ICI : Ajout du 📌 si la publication est épinglée */}
+                          <Text style={[styles.postAuthor, { color: currentTheme.primary }]}>
+                            {item.epingle ? '📌 ' : ''}{item.auteur || 'La Direction'}
+                          </Text>
+                          <Text style={styles.postDate}>{new Date(item.date_creation).toLocaleDateString()}</Text>
+                        </View>
+                      </View>
+                    </View>
+                    
+                    {imageUrls.length > 0 && (
+                      <View style={styles.multiImageContainer}>
+                        <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={true}>
+                          {imageUrls.map((url, idx) => {
+                            const isVideo = url.startsWith('video:');
+                            const cleanUrl = isVideo ? url.replace('video:', '') : url;
+
+                            if (isVideo) {
+                              const videoIdMatch = cleanUrl.match(/file\/d\/([a-zA-Z0-9_-]+)/);
+                              const videoId = videoIdMatch ? videoIdMatch[1] : null;
+                              const thumbnailUrl = videoId ? `https://drive.google.com/thumbnail?id=${videoId}&sz=w800` : null;
+
+                              return (
+                                <TouchableOpacity key={idx} activeOpacity={0.9} onPress={() => { Linking.openURL(cleanUrl); marquerCommeVu(item.id); }}>
+                                  <View style={{position: 'relative'}}>
+                                    {thumbnailUrl ? (
+                                      <Image source={{ uri: thumbnailUrl }} style={styles.postMultiImage} resizeMode="cover" />
+                                    ) : (
+                                      <View style={[styles.postMultiImage, { backgroundColor: '#1E293B' }]} />
+                                    )}
+                                    <View style={styles.playOverlay}>
+                                      <View style={styles.playCircle}>
+                                        <Text style={styles.playTriangle}>▶</Text>
+                                      </View>
+                                    </View>
+                                  </View>
+                                </TouchableOpacity>
+                              );
+                            }
+
+                            return (
+                              <TouchableOpacity key={idx} activeOpacity={0.9} onPress={() => { setImageView(url); setModalImageVisible(true); marquerCommeVu(item.id); }}>
+                                <Image source={{ uri: url }} style={styles.postMultiImage} resizeMode="contain" resizeMethod="resize" />
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                        {imageUrls.length > 1 && (<View style={styles.multiBadge}><Text style={styles.multiBadgeText}>1 / {imageUrls.length} ➡️</Text></View>)}
+                      </View>
+                    )}
+                    <View style={styles.postBody}>{item.texte ? <Text style={styles.postDescription}>{item.texte}</Text> : null}</View>
+                  </View>
+                );
+              }} 
+            />
+          )
+        )}
+        
+        {/* ONGLET 2: DOSSIERS & CAHIER DE LIAISON */}
+        {activeTab === 'dossiers' && (
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <Text style={styles.sectionTitle}>Dossiers de mes enfants</Text>
+            {enfants.length === 0 ? (
+               <Text style={styles.emptyText}>Aucun dossier enfant rattaché à votre compte.</Text>
+            ) : (
+              enfants.map(enfant => {
+                const cahier = cahiersJour[enfant.id]; 
+                const activeSOS = recuperationsSOS[enfant.id];
+                const statutCertif = statutAttestations[enfant.id];
+                const listeAbsencesKid = absencesKids[enfant.id] || []; 
+                const listeProgresKid = progresKids[enfant.id] || [];
+
+                return (
+                  <View key={enfant.id} style={[styles.dossierCard, {borderLeftWidth: 4, borderLeftColor: '#8BC34A'}]}>
+                    <View style={styles.dossierHeader}>
+                      {enfant.photo_url ? <Image source={{ uri: enfant.photo_url }} style={styles.dossierPhoto} /> : <View style={styles.dossierPhotoPlaceholder}><Text style={{fontSize: 25}}>👦</Text></View>}
+                      <View style={{flex: 1}}>
+                        <Text style={styles.dossierName}>{enfant.prenom} {enfant.nom}</Text>
+                        <Text style={styles.dossierCode}>🎂 Né(e) le : {enfant.date_naissance ? enfant.date_naissance.split('-').reverse().join('/') : 'Non renseigné'}</Text>
+                        <Text style={styles.classeText}>🏫 Classe : {enfant.classe || 'Non définie'}</Text>
+                        <Text style={[styles.dossierCode, {marginTop: 6}]}>Code : {enfant.code_parent}</Text>
+                      </View>
+                    </View>
+
+                    {enfant.inscrit_transport && (
+                      <View style={styles.transportReadOnlyBox}>
+                        <Text style={styles.transportReadOnlyTitle}>🚌 Transport Scolaire</Text>
+                        <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 5}}>
+                          <Text style={styles.transportLabel}>⏰ {enfant.heure_ramassage ? enfant.heure_ramassage.slice(0,5) : '--:--'}</Text>
+                          <Text style={styles.transportLabel} numberOfLines={1}>📍 {enfant.point_ramassage || 'À définir'}</Text>
+                        </View>
+                        <Text style={styles.transportHelpText}>* Contactez la direction pour modifier le trajet.</Text>
+                      </View>
+                    )}
+                    
+                    {listeProgresKid.length > 0 && (
+                      <View style={[styles.timelineBox, { borderColor: currentTheme.primary }]}>
+                        <Text style={[styles.timelineMainTitle, { color: currentTheme.primary }]}>🌟 Fil des Réussites (Dernières 24h)</Text>
+                        <View style={styles.timelineContainer}>
+                          {listeProgresKid.map((progres) => (
+                            <View key={progres.id} style={styles.timelineItem}>
+                              <View style={[styles.timelineDot, { backgroundColor: currentTheme.primary }]} />
+                              <View style={styles.timelineContent}>
+                                <Text style={[styles.timelineTitle, { color: currentTheme.primary }]}>{progres.titre_competence}</Text>
+                                <Text style={styles.timelineDate}>{new Date(progres.date_creation).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</Text>
+                                {progres.description ? <Text style={styles.timelineDesc}>{progres.description}</Text> : null}
+                                {progres.photo_url ? (
+                                  <TouchableOpacity onPress={() => { setImageView(progres.photo_url); setModalImageVisible(true); }}>
+                                    <Image source={{ uri: progres.photo_url }} style={styles.timelineImage} />
+                                  </TouchableOpacity>
+                                ) : null}
+                              </View>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    )}
+
+                    {cahier ? (
+                      <View style={styles.cahierBox}>
+                        <Text style={styles.cahierTitle}>📝 La journée d'aujourd'hui</Text>
+                        <View style={styles.cahierGrid}>
+                          <View style={styles.cahierItem}><Text style={styles.cahierLabel}>🍽️ Repas</Text><Text style={styles.cahierValue}>{cahier.repas || '-'}</Text></View>
+                          <View style={styles.cahierItem}><Text style={styles.cahierLabel}>💤 Sieste</Text><Text style={styles.cahierValue}>{cahier.sieste || '-'}</Text></View>
+                          <View style={styles.cahierItem}><Text style={styles.cahierLabel}>😊 Humeur</Text><Text style={styles.cahierValue}>{cahier.humeur || '-'}</Text></View>
+                          <View style={styles.cahierItem}><Text style={styles.cahierLabel}>🧻 Change</Text><Text style={styles.cahierValue}>{cahier.toilettes || '-'}</Text></View>
+                        </View>
+                        {cahier.remarques ? (
+                          <View style={styles.cahierMotDoux}><Text style={{fontStyle: 'italic', color: '#2C3E50'}}>"{cahier.remarques}"</Text></View>
+                        ) : null}
+                      </View>
+                    ) : <Text style={{color: '#95A5A6', fontStyle: 'italic', marginBottom: 15, fontSize: 12, paddingLeft: 5}}>Le résumé de la journée n'est pas encore disponible.</Text>}
+
+                    <View style={styles.absencesTrackingBox}>
+                      <Text style={styles.absencesTrackingTitle}>📅 Historique des Absences ({listeAbsencesKid.length})</Text>
+                      {listeAbsencesKid.length === 0 ? (
+                        <Text style={styles.absenceEmptyText}>Aucune absence enregistrée.</Text>
+                      ) : (
+                        listeAbsencesKid.map(abs => (
+                          <View key={abs.id} style={styles.absenceTrackRow}>
+                            <Text style={styles.absenceTrackDate}>🗓️ {abs.date_absence.split('-').reverse().join('/')}</Text>
+                            <Text style={styles.absenceTrackMotif} numberOfLines={1}>💬 {abs.motif}</Text>
+                            <View style={styles.absenceTrackBadge}><Text style={styles.absenceTrackBadgeText}>{abs.statut}</Text></View>
+                          </View>
+                        ))
+                      )}
+                    </View>
+
+                    {activeSOS && (
+                      <View style={styles.sosStatusActiveCard}>
+                        <Text style={styles.sosStatusTitle}>🛡️ Sortie SOS Active</Text>
+                        <Text style={styles.sosStatusText}>Prévu pour : {activeSOS.nom_tierce_personne} (CIN: {activeSOS.cin_tierce})</Text>
+                        <Text style={styles.sosCodeDisplay}>Code : {activeSOS.code_unique}</Text>
+                      </View>
+                    )}
+
+                    <View style={styles.medicalBox}>
+                      <Text style={styles.medicalTitle}>🍽️ Régime spécifique & Santé :</Text>
+                      <Text style={[styles.medicalText, !enfant.details_allergie && !enfant.remarques_medicales && {color: '#10B981', fontStyle: 'italic'}]}>
+                        {enfant.details_allergie || enfant.remarques_medicales || "✅ Aucune contre-indication signalée."}
+                      </Text>
+                      
+                      <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 8}}>
+                        <TouchableOpacity style={[styles.editMedicalBtn, {flex: 1, minWidth: '45%'}]} onPress={() => ouvrirModalMedical(enfant)}>
+                          <Text style={styles.editMedicalText}>✏️ Régime / Santé</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity 
+                          style={[
+                            styles.editMedicalBtn, 
+                            {flex: 1, minWidth: '45%'}, 
+                            statutCertif === 'en_attente' ? {backgroundColor: '#FF9800'} : 
+                            statutCertif === 'imprime' ? {backgroundColor: '#10B981'} : 
+                            {backgroundColor: '#00BCD4'}
+                          ]} 
+                          onPress={() => envoyerDemandeScolarite(enfant)} 
+                          disabled={statutCertif === 'en_attente'}
+                        >
+                          <Text style={styles.editMedicalText}>
+                            {statutCertif === 'en_attente' ? '⏳ En cours...' : 
+                             statutCertif === 'imprime' ? '✅ Prêt - Demander' : 
+                             '📄 Demander Attestation'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={[styles.actionBtnSecondary, {backgroundColor: '#673AB7'}]} onPress={() => { setEnfantSelectionne(enfant); setModalAbsenceVisible(true); }}>
+                          <Text style={styles.editMedicalText}>📅 Signaler Absence</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.actionBtnSecondary, {backgroundColor: '#FF5722'}]} onPress={() => { setEnfantSelectionne(enfant); setModalSOSVisible(true); }}>
+                          <Text style={styles.editMedicalText}>🛡️ Code Sortie SOS</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                  </View>
+                );
+              })
+            )}
+          </ScrollView>
+        )}
+        
+        {/* ONGLET 3: RESSOURCES */}
+        {activeTab === 'ressources' && (
+          <View style={{flex: 1}}>
+
+            <TouchableOpacity 
+              style={[styles.weeklyMenuCard, { borderColor: currentTheme.primary }]} 
+              onPress={() => navigation.navigate('MenuProgrammeParent')}
+            >
+              <Text style={styles.weeklyMenuEmoji}>🗓️</Text>
+              <View style={{flex: 1}}>
+                <Text style={[styles.weeklyMenuTitle, { color: currentTheme.primary }]}>Menu & Programme Hebdo</Text>
+                <Text style={styles.weeklyMenuDesc}>Découvrez les repas et activités de la semaine !</Text>
+              </View>
+              <Text style={styles.weeklyMenuArrow}>➡️</Text>
+            </TouchableOpacity>
+
+            <View style={styles.rTabContainer}>
+              <TouchableOpacity onPress={() => setActiveRessourceTab('menus')} style={[styles.rTabBtn, activeRessourceTab === 'menus' ? { backgroundColor: '#FF9800', elevation: 3 } : { backgroundColor: '#FFF3E0', borderWidth: 1, borderColor: '#FFE0B2' }]}><Text style={[styles.rTabText, { color: activeRessourceTab === 'menus' ? '#FFF' : '#E65100' }]}>🍽️ Menus Cantine</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setActiveRessourceTab('documents')} style={[styles.rTabBtn, activeRessourceTab === 'documents' ? { backgroundColor: '#9C27B0', elevation: 3 } : { backgroundColor: '#F3E5F5', borderWidth: 1, borderColor: '#E1BEE7' }]}><Text style={[styles.rTabText, { color: activeRessourceTab === 'documents' ? '#FFF' : '#4A148C' }]}>📂 Documents Utiles</Text></TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingTop: 10}}>
+              {activeRessourceTab === 'menus' ? (
+                menus.length === 0 ? <Text style={styles.emptyText}>Aucun ancien menu publié pour le moment.</Text> :
+                menus.map(item => (
+                  <View key={item.id.toString()} style={[styles.ressourceCard, { borderTopWidth: 4, borderTopColor: '#FF9800' }]}>
+                    <Text style={styles.ressourceTitle}>{item.description}</Text>
+                    {item.image_url && <TouchableOpacity activeOpacity={0.9} onPress={() => { setImageView(item.image_url); setModalImageVisible(true); }}><Image source={{uri: item.image_url}} style={styles.ressourceImage} resizeMode="contain" /></TouchableOpacity>}
+                  </View>
+                ))
+              ) : (
+                documents.length === 0 ? <Text style={styles.emptyText}>Aucun document publié pour le moment.</Text> :
+                documents.map(item => (
+                  <View key={item.id.toString()} style={[styles.ressourceCard, { borderTopWidth: 4, borderTopColor: '#9C27B0' }]}>
+                    <Text style={styles.ressourceTitle}>📎 {item.titre}</Text>
+                    {item.fichier_url && <TouchableOpacity activeOpacity={0.9} onPress={() => { setImageView(item.fichier_url); setModalImageVisible(true); }}><Image source={{uri: item.fichier_url}} style={styles.ressourceImage} resizeMode="contain" /></TouchableOpacity>}
+                  </View>
+                ))
+              )}
+
+              <View style={styles.diagnosticCard}>
+                <Text style={styles.diagnosticTitle}>🔒 Statut de connexion & Alertes</Text>
+                <View style={styles.diagnosticRow}><Text style={styles.diagnosticLabel}>Notifications :</Text><Text style={styles.diagnosticValue}>{notifTokenStatus}</Text></View>
+                <TouchableOpacity style={[styles.syncBtn, { borderColor: currentTheme.primary }]} onPress={forcerSynchronisationAppareil} disabled={syncLoading}>
+                  {syncLoading ? <ActivityIndicator size="small" color={currentTheme.primary} /> : <Text style={[styles.syncBtnText, { color: currentTheme.primary }]}>🔄 Synchroniser cet appareil</Text>}
+                </TouchableOpacity>
+              </View>
+
+              <View style={[styles.diagnosticCard, { marginTop: 15, borderColor: '#FFCDD2', marginBottom: 30 }]}>
+                <Text style={styles.diagnosticTitle}>⚙️ Gestion du compte</Text>
+                <Text style={styles.diagnosticDesc}>Conformément aux règles de confidentialité, vous pouvez demander la suppression de votre compte parent et de vos données personnelles.</Text>
+                <TouchableOpacity style={[styles.syncBtn, { borderColor: '#F44336', backgroundColor: '#FFF5F5', marginTop: 15 }]} onPress={handleDeleteAccount}>
+                  <Text style={[styles.syncBtnText, { color: '#F44336' }]}>🗑️ Supprimer mon compte</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        )}
+        
+        {/* ONGLET 4: FACTURES */}
+        {activeTab === 'factures' && (
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <Text style={[styles.sectionTitle, {color: '#F44336'}]}>🔴 À régler ({facturesEnAttente.length})</Text>
+            {facturesEnAttente.length === 0 ? <Text style={styles.emptyText}>Aucune facture en attente de paiement. 🎉</Text> : 
+              facturesEnAttente.map(item => (
+                <View key={item.id.toString()} style={styles.factureCard}>
+                  <View style={styles.factureHeader}><View><Text style={styles.factureTitre}>{item.titre}</Text><Text style={styles.factureEnfant}>👦 {item.enfants?.prenom}</Text></View><Text style={styles.factureMontant}>{item.montant} Dhs</Text></View>
+                  <TouchableOpacity style={[styles.payButton, { backgroundColor: currentTheme.primary }]} onPress={() => {setFactureAPayer(item); setRecuUri(null); setRecuBase64(null); setModalPaiementVisible(true);}}>
+                    <Text style={styles.payButtonText}>Régler par Virement</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            }
+
+            {facturesEnVerification.length > 0 && (
+              <View style={{marginTop: 20}}>
+                <Text style={[styles.sectionTitle, {color: '#9C27B0'}]}>🟣 En cours de vérification ({facturesEnVerification.length})</Text>
+                {facturesEnVerification.map(item => (
+                  <View key={item.id.toString()} style={[styles.facturePayeeCard, {borderLeftColor: '#9C27B0'}]}>
+                    <View style={styles.factureHeader}><View><Text style={styles.factureTitrePayee}>{item.titre}</Text></View><Text style={[styles.factureMontantPayee, {color: '#9C27B0'}]}>{item.montant} Dhs</Text></View>
+                    <Text style={{color: '#9C27B0', fontSize: 12, fontStyle: 'italic', marginTop: 5}}>⏳ En attente de validation par la direction</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            <Text style={[styles.sectionTitle, {marginTop: 30, color: '#4CAF50'}]}>🟢 Historique payé ({facturesPayees.length})</Text>
+            {facturesPayees.length === 0 ? <Text style={styles.emptyText}>Aucun historique de paiement pour l'instant.</Text> :
+              facturesPayees.map(item => (
+                <View key={item.id.toString()} style={[styles.facturePayeeCard, {borderLeftColor: '#4CAF50'}]}>
+                  <View style={styles.factureHeader}><View><Text style={styles.factureTitrePayee}>{item.titre}</Text></View><Text style={[styles.factureMontantPayee, {color: '#4CAF50'}]}>{item.montant} Dhs</Text></View>
+                  <Text style={styles.datePaiementText}>✅ Validé le {new Date(item.date_paiement).toLocaleDateString('fr-FR')}</Text>
+                </View>
+              ))
+            }
+          </ScrollView>
+        )}
+      </View>
+
+      <View style={styles.bottomNav}>
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('mur')}><Text style={[styles.navIcon, activeTab === 'mur' && {color: currentTheme.primary}]}>🏠</Text><Text style={[styles.navText, activeTab === 'mur' && {color: currentTheme.primary}]}>Le Mur</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('dossiers')}><Text style={[styles.navIcon, activeTab === 'dossiers' && {color: '#8BC34A'}]}>🎒</Text><Text style={[styles.navText, activeTab === 'dossiers' && {color: '#8BC34A'}]}>Dossiers</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('ressources')}><Text style={[styles.navIcon, activeTab === 'ressources' && {color: '#9C27B0'}]}>📂</Text><Text style={[styles.navText, activeTab === 'ressources' && {color: '#9C27B0'}]}>Infos</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('factures')}><View><Text style={[styles.navIcon, activeTab === 'factures' && {color: '#FF9800'}]}>💳</Text>{totalAlertes > 0 && <View style={styles.badge}><Text style={styles.badgeText}>{totalAlertes}</Text></View>}</View><Text style={[styles.navText, activeTab === 'factures' && {color: '#FF9800'}]}>Paiements</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Messagerie')}><View><Text style={styles.navIcon}>💬</Text>{unreadCount > 0 && <View style={styles.badge}><Text style={styles.badgeText}>{unreadCount}</Text></View>}</View><Text style={styles.navText}>Messages</Text></TouchableOpacity>
+      </View>
+
+      <Modal visible={modalMedicalVisible} animationType="slide" transparent={true}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, {maxHeight: '90%'}]}>
+              <Text style={styles.modalTitle}>Dossier Médical de {enfantSelectionne?.prenom}</Text>
+              <Text style={styles.label}>Signalez toute allergie, traitement en cours, ou consigne particulière :</Text>
+              <TextInput style={[styles.input, styles.textArea]} value={remarqueTemp} onChangeText={setRemarqueTemp} multiline={true} placeholder="Ex: Allergique aux arachides..." />
+              
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={() => setModalMedicalVisible(false)}>
+                  <Text style={styles.buttonTextWhite}>Annuler</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.button, styles.confirmButton]} onPress={sauvegarderMedical}>
+                  <Text style={styles.buttonTextWhite}>Enregistrer</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={modalAbsenceVisible} animationType="slide" transparent={true}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, {maxHeight: '90%'}]}>
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <Text style={styles.modalTitle}>Déclarer une absence pour {enfantSelectionne?.prenom}</Text>
+                <Text style={styles.label}>Date de l'absence</Text>
+                {Platform.OS === 'web' ? (
+                  <input type="date" value={absenceDate} onChange={(e) => setAbsenceDate(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: '1px solid #E2E8F0', backgroundColor: '#F8FAFC', fontSize: '14px', outline: 'none', boxSizing: 'border-box', marginBottom: '10px' }} />
+                ) : (
+                  <View>
+                    <TouchableOpacity style={styles.datePickerSelectorRow} onPress={() => setShowAbsenceDatePicker(true)}>
+                      <Text style={styles.datePickerSelectorRowText}>📅 {absenceDate ? absenceDate.split('-').reverse().join('/') : "Sélectionner la date"}</Text>
+                    </TouchableOpacity>
+                    {showAbsenceDatePicker && <DateTimePicker value={absenceDateObj} mode="date" display={Platform.OS === 'ios' ? 'spinner' : 'default'} onChange={handleAbsenceDateChange} minimumDate={new Date()} />}
+                  </View>
+                )}
+                <Text style={styles.label}>Motif de l'absence</Text>
+                <TextInput style={[styles.input, {minHeight: 60}]} placeholder="Ex: Consultation médicale, Voyage..." value={absenceMotif} onChangeText={setAbsenceMotif} multiline />
+                <View style={styles.modalButtons}>
+                  <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={() => { setModalAbsenceVisible(false); setShowAbsenceDatePicker(false); }}><Text style={styles.buttonTextWhite}>Fermer</Text></TouchableOpacity>
+                  <TouchableOpacity style={[styles.button, { backgroundColor: '#673AB7' }]} onPress={déclarerAbsence}><Text style={styles.buttonTextWhite}>Signaler</Text></TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={modalSOSVisible} animationType="slide" transparent={true}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, {maxHeight: '90%'}]}>
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <Text style={styles.modalTitle}>Générer un Code de Récupération SOS</Text>
+                <Text style={styles.labelDesc}>Utilisez ceci si une tierce personne vient chercher l'enfant aujourd'hui.</Text>
+                <Text style={styles.label}>Nom complet de la personne autorisée</Text>
+                <TextInput style={styles.input} placeholder="Ex: Amina Alami (Grand-mère)" value={sosNom} onChangeText={setSosNom} />
+                <Text style={styles.label}>Numéro de CIN (Carte d'identité)</Text>
+                <TextInput style={styles.input} placeholder="Ex: G765432" value={sosCin} onChangeText={setSosCin} autoCapitalize="characters" />
+                <View style={styles.modalButtons}>
+                  <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={() => setModalSOSVisible(false)}><Text style={styles.buttonTextWhite}>Annuler</Text></TouchableOpacity>
+                  <TouchableOpacity style={[styles.button, { backgroundColor: '#FF5722' }]} onPress={genererCodeSOS}><Text style={styles.buttonTextWhite}>Générer le Code</Text></TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+      
+      <Modal visible={modalPaiementVisible} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '90%' }]}> 
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+              <Text style={styles.modalTitle}>Régler : {factureAPayer?.titre}</Text>
+              <Text style={styles.factureMontantCenter}>{factureAPayer?.montant} Dhs</Text>
+              <Text style={styles.sectionTitle}>1. Nos coordonnées bancaires</Text>
+              {banques.map(b => (
+                <View key={b.id.toString()} style={styles.banqueCard}>
+                  <Text style={{fontWeight: '900', color: '#0F172A'}}>{b.nom_banque}</Text>
+                  <Text selectable={true} style={{color: '#64748B', fontSize: 16, marginTop: 5, letterSpacing: 1}}>{b.rib}</Text>
+                </View>
+              ))}
+              <Text style={styles.sectionTitle}>2. Envoyer la preuve de virement</Text>
+              <TouchableOpacity style={styles.uploadBtn} onPress={choisirRecu}><Text style={styles.uploadBtnText}>📸 {recuUri ? "Changer l'image" : "Photographier le reçu"}</Text></TouchableOpacity>
+              {recuUri && <Image source={{ uri: recuUri }} style={styles.previewRecu} />}
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={() => setModalPaiementVisible(false)}><Text style={styles.buttonTextWhite}>Annuler</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.button, {backgroundColor: currentTheme.primary}]} onPress={envoyerRecu} disabled={uploadingRecu}>
+                  {uploadingRecu ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonTextWhite}>Envoyer le reçu</Text>}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={modalImageVisible} transparent={true} animationType="fade">
+        <View style={styles.fullScreenOverlay}>
+          <TouchableOpacity style={styles.closeImageBtn} onPress={() => setModalImageVisible(false)}><Text style={styles.closeImageText}>✖ Fermer</Text></TouchableOpacity>
+          {imageView && <Image source={{ uri: imageView }} style={styles.fullScreenImage} resizeMode="contain" resizeMethod="resize" fadeDuration={0} />}
+          <TouchableOpacity style={[styles.downloadBtn, { backgroundColor: currentTheme.primary }]} onPress={() => telechargerPhotoOriginale(imageView)} disabled={loadingDownload}>
+            {loadingDownload ? <ActivityIndicator color="#FFF" /> : <Text style={styles.downloadBtnText}>⬇️ Télécharger / Enregistrer</Text>}
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-  scrollContainer: { padding: 15, paddingBottom: 40 },
-  weekNavigator: { flexDirection: 'row', backgroundColor: '#FFF', padding: 14, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#E2E8F0', elevation: 1 },
-  navBtn: { paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#F1F5F9', borderRadius: 8 },
-  navBtnText: { fontSize: 11, fontWeight: '700', color: '#475569' },
-  centerWeekText: { flex: 1, alignItems: 'center' },
-  weekDates: { fontSize: 13, fontWeight: '900', color: '#0F172A', textAlign: 'center' },
-  emptyEmoji: { fontSize: 40, marginBottom: 10 },
-  emptyText: { fontSize: 14, color: '#64748B', textAlign: 'center', fontWeight: '500', lineHeight: 20 },
-  themeCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 20, marginBottom: 20, elevation: 2, borderWidth: 1, borderColor: '#E2E8F0' },
-  themeHeader: { fontSize: 12, fontWeight: '800', color: '#64748B', textTransform: 'uppercase', marginBottom: 8 },
-  themeTitle: { fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 10 },
-  themeDesc: { fontSize: 14, color: '#334155', lineHeight: 22 },
-  sectionMenuTitle: { fontSize: 16, fontWeight: '900', color: '#0F172A', marginBottom: 15, marginLeft: 5 },
-  dayCard: { backgroundColor: '#FFF', borderRadius: 12, padding: 15, marginBottom: 12, borderLeftWidth: 4, borderLeftColor: '#10B981', elevation: 1 },
-  dayTitle: { fontSize: 13, fontWeight: '900', marginBottom: 6 },
-  dayContent: { fontSize: 14, color: '#334155', lineHeight: 20 }
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: { backgroundColor: '#FFFFFF', padding: 20, paddingTop: Platform.OS === 'ios' ? 40 : 20, borderBottomLeftRadius: 20, borderBottomRightRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 4 },
+  greeting: { fontSize: 24, fontWeight: '900', color: '#4A148C' },
+  subtitle: { fontSize: 16, color: '#E91E63', marginTop: 2, fontWeight: '700' },
+  
+  webNotifyBtn: { backgroundColor: '#E0F7FA', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#B2EBF2' },
+  webNotifyText: { fontSize: 12, color: '#00BCD4', fontWeight: '800' },
+
+  relanceBanner: { padding: 15, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  relanceText: { color: '#FFF', fontWeight: 'bold', fontSize: 14, textAlign: 'center' },
+  content: { flex: 1, padding: 15 },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: '#1E293B', marginBottom: 15, marginTop: 10 },
+  
+  postContainer: { backgroundColor: '#FFFFFF', borderRadius: 16, marginBottom: 20, elevation: 3, overflow: 'hidden' },
+  postHeader: { flexDirection: 'row', alignItems: 'center', padding: 15, justifyContent: 'space-between' },
+  avatarCreche: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FCE4EC', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  postAuthor: { fontWeight: '800', color: '#E91E63', fontSize: 16 },
+  postDate: { color: '#64748B', fontSize: 12, fontWeight: '500' },
+  
+  multiImageContainer: { position: 'relative', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#F1F5F9', backgroundColor: '#F8FAFC' }, 
+  postMultiImage: { width: screenWidth - 30, height: 350 },
+  
+  playOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.2)' },
+  playCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFFFFF' },
+  playTriangle: { color: '#FFFFFF', fontSize: 26, marginLeft: 4 }, 
+
+  multiBadge: { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 },
+  multiBadgeText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
+  
+  expirationBadge: { position: 'absolute', bottom: 10, left: 10, backgroundColor: 'rgba(231, 76, 60, 0.85)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+  expirationText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
+  
+  postBody: { padding: 15 },
+  postDescription: { color: '#334155', fontSize: 15, lineHeight: 22, fontWeight: '500' },
+
+  fullScreenOverlay: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
+  closeImageBtn: { position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 20, backgroundColor: 'rgba(255,255,255,0.2)', padding: 10, borderRadius: 20, zIndex: 10 },
+  closeImageText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
+  fullScreenImage: { width: '100%', height: '80%' },
+  downloadBtn: { position: 'absolute', bottom: 40, backgroundColor: '#00BCD4', paddingHorizontal: 20, paddingVertical: 15, borderRadius: 30, elevation: 5 },
+  downloadBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
+
+  dossierCard: { backgroundColor: '#FFFFFF', padding: 15, borderRadius: 15, marginBottom: 15, elevation: 3, borderWidth: 1, borderColor: '#F1F8E9' },
+  dossierHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 15 },
+  dossierPhoto: { width: 64, height: 64, borderRadius: 32, marginRight: 15 },
+  dossierPhotoPlaceholder: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#F1F8E9', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  dossierName: { fontSize: 18, fontWeight: '800', color: '#1E293B' },
+  dossierCode: { fontSize: 13, color: '#FF9800', fontWeight: '700', marginTop: 2 },
+  
+  classeText: { fontSize: 13, color: '#00BCD4', fontWeight: '800', marginTop: 4 },
+  
+  medicalBox: { backgroundColor: '#FFF3E0', padding: 15, borderRadius: 12, borderWidth: 1, borderColor: '#FFE0B2' },
+  medicalTitle: { fontWeight: '800', color: '#E65100', marginBottom: 5 },
+  medicalText: { color: '#D84315', fontSize: 14, marginBottom: 10, fontStyle: 'italic', fontWeight: '500' },
+  editMedicalBtn: { padding: 12, borderRadius: 10, alignItems: 'center', backgroundColor: '#FF9800' },
+  editMedicalText: { color: '#FFF', fontWeight: 'bold', fontSize: 13 },
+  actionBtnSecondary: { flex: 1, minWidth: '45%', padding: 12, borderRadius: 10, alignItems: 'center' },
+  
+  cahierBox: { backgroundColor: '#F3E5F5', padding: 15, borderRadius: 12, marginBottom: 15, borderWidth: 1, borderColor: '#E1BEE7' },
+  cahierTitle: { fontSize: 15, fontWeight: '800', color: '#9C27B0', marginBottom: 10 },
+  cahierGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  cahierItem: { width: '48%', backgroundColor: '#FFFFFF', padding: 10, borderRadius: 10, marginBottom: 10, elevation: 1 },
+  cahierLabel: { fontSize: 11, color: '#94A3B8', marginBottom: 2, fontWeight: '700' },
+  cahierValue: { fontSize: 14, fontWeight: '900', color: '#1E293B' },
+  cahierMotDoux: { backgroundColor: '#FFFFFF', padding: 12, borderRadius: 10, marginTop: 5, borderLeftWidth: 4, borderLeftColor: '#9C27B0' },
+  
+  transportReadOnlyBox: { backgroundColor: '#EEF2FF', padding: 12, borderRadius: 12, marginBottom: 15, borderWidth: 1, borderColor: '#C7D2FE' },
+  transportReadOnlyTitle: { fontSize: 13, fontWeight: '800', color: '#3F51B5' },
+  transportLabel: { fontSize: 13, fontWeight: 'bold', color: '#1E293B', flex: 1 },
+  transportHelpText: { fontSize: 10, color: '#64748B', fontStyle: 'italic', marginTop: 8 },
+
+  timelineBox: { backgroundColor: '#FFFFFF', padding: 15, borderRadius: 16, marginBottom: 15, borderWidth: 1, borderTopWidth: 4 },
+  timelineMainTitle: { fontSize: 14, fontWeight: '900', marginBottom: 15 },
+  timelineContainer: { paddingLeft: 20, borderLeftWidth: 2, borderColor: '#E2E8F0', marginLeft: 10 },
+  timelineItem: { position: 'relative', marginBottom: 20 },
+  timelineDot: { position: 'absolute', left: -27, top: 0, width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: '#FFF' },
+  timelineContent: { backgroundColor: '#F8FAFC', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#F1F5F9' },
+  timelineTitle: { fontWeight: '800', fontSize: 14, marginBottom: 2 },
+  timelineDate: { fontSize: 11, color: '#94A3B8', marginBottom: 6, fontWeight: '600' },
+  timelineDesc: { fontSize: 13, color: '#475569', fontStyle: 'italic', lineHeight: 18 },
+  timelineImage: { width: '100%', height: 160, borderRadius: 12, marginTop: 10, backgroundColor: '#E2E8F0', resizeMode: 'cover', resizeMethod: 'resize' },
+
+  checklistParentBox: { backgroundColor: '#E8F5E9', padding: 12, borderRadius: 12, marginBottom: 15, borderWidth: 1, borderColor: '#C8E6C9' },
+  checklistParentTitle: { fontSize: 13, fontWeight: '800', color: '#2E7D32', marginBottom: 8 },
+  checklistParentGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 6 },
+  checkItemStatus: { width: '48%', backgroundColor: '#FFFFFF', padding: 6, borderRadius: 6, fontSize: 11, color: '#757575', fontWeight: '600', borderWidth: 1, borderColor: '#E0E0E0' },
+  checkItemStatusReady: { color: '#2E7D32', backgroundColor: '#E8F5E9', borderColor: '#A5D6A7' },
+
+  absencesTrackingBox: { backgroundColor: '#F5F3FF', padding: 12, borderRadius: 12, marginBottom: 15, borderWidth: 1, borderColor: '#DDD6FE' },
+  absencesTrackingTitle: { fontSize: 13, fontWeight: '800', color: '#673AB7', marginBottom: 8 },
+  absenceEmptyText: { fontSize: 12, color: '#94A3B8', fontStyle: 'italic', paddingLeft: 4 },
+  absenceTrackRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', padding: 8, borderRadius: 8, marginBottom: 6, borderWidth: 1, borderColor: '#E2E8F0' },
+  absenceTrackDate: { fontSize: 12, fontWeight: '800', color: '#0F172A', width: '30%' },
+  absenceTrackMotif: { fontSize: 12, color: '#475569', flex: 1, paddingHorizontal: 5 },
+  absenceTrackBadge: { backgroundColor: '#EDE7F6', paddingVertical: 2, paddingHorizontal: 6, borderRadius: 6 },
+  absenceTrackBadgeText: { color: '#673AB7', fontSize: 10, fontWeight: '700' },
+
+  sosStatusActiveCard: { backgroundColor: '#FFF5F5', borderLeftWidth: 4, borderLeftColor: '#FF5722', padding: 12, borderRadius: 8, marginBottom: 15, borderWidth: 1, borderColor: '#FFCCBC' },
+  sosStatusTitle: { fontSize: 13, fontWeight: '900', color: '#D84315' },
+  sosStatusText: { fontSize: 12, color: '#5D4037', marginTop: 3, fontWeight: '500' },
+  sosCodeDisplay: { fontSize: 18, fontWeight: '900', color: '#FF5722', marginTop: 5, letterSpacing: 1 },
+
+  weeklyMenuCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderWidth: 2, borderRadius: 16, padding: 15, marginBottom: 15, elevation: 2 },
+  weeklyMenuEmoji: { fontSize: 28, marginRight: 15 },
+  weeklyMenuTitle: { fontSize: 16, fontWeight: '900' },
+  weeklyMenuDesc: { fontSize: 12, color: '#64748B', marginTop: 2, fontWeight: '600' },
+  weeklyMenuArrow: { fontSize: 18, color: '#94A3B8' },
+
+  rTabContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
+  rTabBtn: { flex: 0.48, paddingVertical: 14, alignItems: 'center', borderRadius: 12 },
+  rTabText: { fontWeight: '800', fontSize: 14 },
+  ressourceCard: { backgroundColor: '#FFFFFF', padding: 15, borderRadius: 15, marginBottom: 15, elevation: 2 },
+  ressourceTitle: { fontSize: 16, fontWeight: '800', color: '#1E293B', marginBottom: 10 },
+  ressourceImage: { width: '100%', height: 400, borderRadius: 10, backgroundColor: '#F8FAFC' },
+  emptyText: { textAlign: 'center', color: '#94A3B8', fontStyle: 'italic', marginTop: 30, fontWeight: '500' },
+  
+  factureCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, marginBottom: 15, elevation: 3, borderLeftWidth: 5, borderLeftColor: '#F44336' },
+  factureHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 15 },
+  factureTitre: { fontSize: 16, fontWeight: '800', color: '#1E293B' },
+  factureEnfant: { fontSize: 13, color: '#64748B', marginTop: 4, fontWeight: '600' },
+  factureMontant: { fontSize: 18, fontWeight: '900', color: '#F44336' },
+  payButton: { backgroundColor: '#2196F3', padding: 14, borderRadius: 10, alignItems: 'center' },
+  payButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
+  
+  facturePayeeCard: { backgroundColor: '#F8FAFC', padding: 16, borderRadius: 16, marginBottom: 15, borderWidth: 1, borderColor: '#F1F5F9', borderLeftWidth: 5 },
+  factureTitrePayee: { fontSize: 16, fontWeight: '800', color: '#94A3B8', textDecorationLine: 'line-through' },
+  factureMontantPayee: { fontSize: 18, fontWeight: '900' },
+  datePaiementText: { color: '#4CAF50', fontSize: 12, fontStyle: 'italic', marginTop: 5, backgroundColor: '#E8F5E9', padding: 8, borderRadius: 6, overflow: 'hidden', fontWeight: '600' },
+
+  bottomNav: { flexDirection: 'row', backgroundColor: '#FFFFFF', paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#F1F5F9', elevation: 10, zIndex: 100 },
+  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  navIcon: { fontSize: 24, color: '#CBD5E1', marginBottom: 2 },
+  navText: { fontSize: 10, color: '#94A3B8', fontWeight: '800' },
+  badge: { position: 'absolute', top: -5, right: -10, backgroundColor: '#F44336', borderRadius: 10, width: 22, height: 22, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFFFFF' },
+  badgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '900' },
+  
+  emptyStateContainer: { alignItems: 'center', marginTop: 50 },
+  emptyStateText: { color: '#94A3B8', fontSize: 15, marginTop: 10, fontStyle: 'italic', fontWeight: '500' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#FFFFFF', padding: 24, borderTopLeftRadius: 30, borderTopRightRadius: 30 },
+  modalTitle: { fontSize: 20, fontWeight: '900', color: '#1E293B', textAlign: 'center', marginBottom: 15 },
+  factureMontantCenter: { fontSize: 28, fontWeight: '900', color: '#F44336', textAlign: 'center', marginBottom: 20 },
+  banqueCard: { backgroundColor: '#F8FAFC', padding: 15, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 10 },
+  uploadBtn: { backgroundColor: '#F1F5F9', padding: 15, borderRadius: 12, alignItems: 'center', marginBottom: 15, borderWidth: 1, borderColor: '#CBD5E1', borderStyle: 'dashed' },
+  uploadBtnText: { color: '#475569', fontWeight: '800' },
+  previewRecu: { width: '100%', height: 150, borderRadius: 12, resizeMode: 'cover', marginBottom: 15 },
+
+  label: { fontSize: 14, color: '#475569', marginBottom: 10, fontWeight: '600' },
+  input: { backgroundColor: '#F8FAFC', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', fontSize: 15, color: '#1E293B' },
+  textArea: { minHeight: 120, textAlignVertical: 'top' },
+  modalButtons: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 15 },
+  button: { flex: 1, padding: 16, borderRadius: 12, alignItems: 'center', marginHorizontal: 5 },
+  cancelButton: { backgroundColor: '#94A3B8' },
+  confirmButton: { backgroundColor: '#8BC34A' },
+  buttonTextWhite: { color: '#FFFFFF', fontWeight: '900', fontSize: 15 },
+  
+  datePickerSelectorRow: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, padding: 14, marginBottom: 10, justifyContent: 'center' },
+  datePickerSelectorRowText: { fontSize: 14, fontWeight: '700', color: '#673AB7' },
+
+  diagnosticCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, marginTop: 20, borderWidth: 1, borderColor: '#E2E8F0', elevation: 1 },
+  diagnosticTitle: { fontSize: 15, fontWeight: '800', color: '#1E293B', marginBottom: 12 },
+  diagnosticRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  diagnosticLabel: { fontSize: 13, color: '#64748B', fontWeight: '600' },
+  diagnosticValue: { fontSize: 13, fontWeight: '700' },
+  diagnosticDesc: { fontSize: 11, color: '#94A3B8', marginTop: 4, lineHeight: 16, fontWeight: '500' },
+  syncBtn: { marginTop: 12, padding: 12, borderRadius: 10, borderWidth: 1, alignItems: 'center', borderStyle: 'dashed', backgroundColor: '#FFFFFF' },
+  syncBtnText: { fontSize: 13, fontWeight: '700' }
 });

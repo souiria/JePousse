@@ -25,6 +25,84 @@ const ouvrirVideoDrive = async (url) => {
   }
 };
 
+// Alignement parfait avec la largeur définie dans StyleSheet (screenWidth - 32)
+const CARD_IMAGE_WIDTH = screenWidth - 32;
+
+const PostImageCarousel = ({ imageUrls, onImagePress, onVideoPress }) => {
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const handleScroll = (event) => {
+    const slide = Math.round(event.nativeEvent.contentOffset.x / CARD_IMAGE_WIDTH);
+    if (slide !== activeIndex && slide >= 0 && slide < imageUrls.length) {
+      setActiveIndex(slide);
+    }
+  };
+
+  const renderCarouselItem = ({ item: url }) => {
+    const isVideo = url.startsWith('video:');
+    const cleanUrl = isVideo ? url.replace('video:', '') : url;
+
+    if (isVideo) {
+      const videoIdMatch = cleanUrl.match(/file\/d\/([a-zA-Z0-9_-]+)/);
+      const videoId = videoIdMatch ? videoIdMatch[1] : null;
+      const thumbnailUrl = videoId ? `https://drive.google.com/thumbnail?id=${videoId}&sz=w800` : null;
+
+      return (
+        <TouchableOpacity activeOpacity={0.9} onPress={() => onVideoPress(cleanUrl)}>
+          <View style={{ position: 'relative' }}>
+            {thumbnailUrl ? (
+              <Image source={{ uri: thumbnailUrl }} style={styles.postMultiImage} resizeMode="cover" />
+            ) : (
+              <View style={[styles.postMultiImage, { backgroundColor: '#1E293B' }]} />
+            )}
+            <View style={styles.playOverlay}>
+              <View style={styles.playCircle}>
+                <Text style={styles.playTriangle}>▶</Text>
+              </View>
+            </View>
+          </View>
+        </TouchableOpacity>
+      );
+    }
+
+    return (
+      <TouchableOpacity activeOpacity={0.9} onPress={() => onImagePress(url)}>
+        <Image source={{ uri: url }} style={styles.postMultiImage} resizeMode="cover" />
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <View style={styles.multiImageContainer}>
+      <FlatList
+        data={imageUrls}
+        keyExtractor={(_, index) => index.toString()}
+        renderItem={renderCarouselItem}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={handleScroll}
+        initialNumToRender={2}
+        maxToRenderPerBatch={2}
+        windowSize={3}
+        removeClippedSubviews={Platform.OS === 'android'}
+        getItemLayout={(_, index) => ({
+          length: CARD_IMAGE_WIDTH,
+          offset: CARD_IMAGE_WIDTH * index,
+          index,
+        })}
+      />
+      {imageUrls.length > 1 && (
+        <View style={styles.multiBadge}>
+          <Text style={styles.multiBadgeText}>
+            {activeIndex + 1} / {imageUrls.length} ➡️
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+};
+
 export default function MurAdminScreen() {
   const [publications, setPublications] = useState([]);
   const [textePost, setTextePost] = useState('');
@@ -66,7 +144,6 @@ export default function MurAdminScreen() {
     }
   };
 
-  // 🚀 FONCTION POUR ÉPINGLER/DÉPINGLER UNE PUBLICATION
   const toggleEpinglePublication = async (post) => {
     try {
       const nouvelEtat = !post.epingle;
@@ -76,7 +153,7 @@ export default function MurAdminScreen() {
         .eq('id', post.id);
 
       if (error) throw error;
-      fetchPublications(); // Rafraîchit la liste
+      fetchPublications();
     } catch (err) {
       Alert.alert("Erreur", "Impossible de modifier l'épingle.");
     }
@@ -430,58 +507,24 @@ export default function MurAdminScreen() {
           </View>
         </View>
         
+        {/* 🚀 REMPLACEMENT PAR LE NOUVEAU CAROUSEL */}
         {imageUrls.length > 0 && (
-          <View style={styles.multiImageContainer}>
-            <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={true}>
-              {imageUrls.map((url, idx) => {
-                const isVideo = url.startsWith('video:');
-                const cleanUrl = isVideo ? url.replace('video:', '') : url;
-
-                if (isVideo) {
-                  const videoIdMatch = cleanUrl.match(/file\/d\/([a-zA-Z0-9_-]+)/);
-                  const videoId = videoIdMatch ? videoIdMatch[1] : null;
-                  const thumbnailUrl = videoId ? `https://drive.google.com/thumbnail?id=${videoId}&sz=w800` : null;
-
-                  return (
-                    <TouchableOpacity key={idx} activeOpacity={0.9} onPress={() => ouvrirVideoDrive(cleanUrl)}>
-                      <View style={{position: 'relative'}}>
-                        {thumbnailUrl ? (
-                          <Image source={{ uri: thumbnailUrl }} style={styles.postMultiImage} resizeMode="cover" />
-                        ) : (
-                          <View style={[styles.postMultiImage, { backgroundColor: '#1E293B' }]} />
-                        )}
-                        <View style={styles.playOverlay}>
-                          <View style={styles.playCircle}>
-                            <Text style={styles.playTriangle}>▶</Text>
-                          </View>
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                }
-
-                return (
-                  <Image key={idx} source={{ uri: url }} style={styles.postMultiImage} resizeMode="contain" />
-                );
-              })}
-            </ScrollView>
-            {imageUrls.length > 1 && (
-              <View style={styles.multiBadge}>
-                <Text style={styles.multiBadgeText}>1 / {imageUrls.length} ➡️</Text>
-              </View>
-            )}
-            
-            {item.date_expiration && (
-               <View style={styles.expirationBadge}>
-                 <Text style={styles.expirationText}>
-                   ⏳ Disparaît le {new Date(item.date_expiration).toLocaleDateString('fr-FR', {day: '2-digit', month: 'short'})}
-                 </Text>
-               </View>
-            )}
-          </View>
+          <PostImageCarousel
+            imageUrls={imageUrls}
+            onImagePress={() => {}} // Optionnel : vous pouvez ajouter une modal image côté admin plus tard
+            onVideoPress={(cleanUrl) => ouvrirVideoDrive(cleanUrl)}
+          />
         )}
         
         {item.texte ? <Text style={styles.postText}>{item.texte}</Text> : null}
+
+        {item.date_expiration && (
+           <View style={styles.expirationBadge}>
+             <Text style={styles.expirationText}>
+               ⏳ Disparaît le {new Date(item.date_expiration).toLocaleDateString('fr-FR', {day: '2-digit', month: 'short'})}
+             </Text>
+           </View>
+        )}
 
         <View style={styles.vuesContainer}>
           <TouchableOpacity style={styles.vuesBtn} onPress={() => ouvrirModalVues(item.vues_publications)}>
@@ -494,7 +537,7 @@ export default function MurAdminScreen() {
 
   const renderFooter = () => (
     <View style={styles.footer}>
-      <Text style={styles.footerText}>Developped by Abderrahim S © 2026</Text>
+      <Text style={styles.footerText}>Developped by A S © 2026</Text>
     </View>
   );
 
@@ -587,7 +630,6 @@ const styles = StyleSheet.create({
   postAuthor: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
   postTime: { fontSize: 12, color: '#64748B', marginTop: 2, fontWeight: '500' },
   
-  // 🚀 BOUTONS HEADER CARD
   pinBtn: { padding: 8, backgroundColor: '#F8FAFC', borderRadius: 12, marginRight: 8, borderWidth: 1, borderColor: '#E2E8F0' },
   pinBtnText: { fontSize: 14 },
   deleteBtn: { padding: 8, backgroundColor: '#FEF2F2', borderRadius: 12 },

@@ -950,7 +950,7 @@ export default function GestionFamillesScreen() {
             </View>
           );
         })}
-        <View style={styles.footer}><Text style={styles.footerText}>Developped by Abderrahim S © 2026</Text></View>
+        <View style={styles.footer}><Text style={styles.footerText}>Developped by A S © 2026</Text></View>
       </ScrollView>
 
       {/* MODAL INSCRIPTION/ÉDITION */}

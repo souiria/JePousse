@@ -27,18 +27,18 @@ export default function EngagementAdminScreen({ navigation }) {
     try {
       setLoading(true);
       
-      // 1. Récupérer tous les parents
+      // 1. Récupérer tous les parents (de la table utilisateurs)
       const { data: parents, error: parentsError } = await supabase
         .from('utilisateurs')
-        .select('id, nom, prenom, code_parent')
+        .select('id, nom, prenom') // On a retiré code_parent d'ici car il est dans la table enfants
         .eq('role', 'parent');
 
       if (parentsError) throw parentsError;
 
-      // 2. Récupérer tous les enfants avec leur parent_id (LIAISON)
+      // 2. Récupérer tous les enfants avec leur parent_id ET leur code_parent
       const { data: enfants, error: enfantsError } = await supabase
         .from('enfants')
-        .select('parent_id'); 
+        .select('parent_id, code_parent'); 
       
       if (enfantsError) throw enfantsError;
 
@@ -54,13 +54,14 @@ export default function EngagementAdminScreen({ navigation }) {
       const parentsAvecVues = parents.map(parent => {
         const derniereVue = vues.find(v => v.utilisateur_id === parent.id);
         
-        // 🚀 CORRECTION : On vérifie si l'ID du parent est présent dans la table enfants
-        const estLie = enfants.some(e => e.parent_id === parent.id);
-
+        // 🚀 CORRECTION : Trouver l'enfant lié pour extraire son code_parent
+        const enfantLie = enfants.find(e => e.parent_id === parent.id);
+        
         return {
           ...parent,
           derniere_vue: derniereVue ? new Date(derniereVue.date_vue) : null,
-          est_lie: estLie
+          est_lie: !!enfantLie, // true si trouvé, false sinon
+          code_famille: enfantLie ? enfantLie.code_parent : null
         };
       });
 
@@ -111,7 +112,7 @@ export default function EngagementAdminScreen({ navigation }) {
           <Text style={styles.parentName}>{item.prenom} {item.nom}</Text>
           <Text style={styles.parentCode}>
              Statut : <Text style={{fontWeight: 'bold', color: item.est_lie ? currentTheme.primary : '#EF4444'}}>
-               {item.est_lie ? "Compte Lié" : "Non lié"}
+               {item.est_lie ? `[${item.code_famille}] - Compte Lié` : "Non lié"}
              </Text>
           </Text>
         </View>

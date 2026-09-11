@@ -123,6 +123,27 @@ export default function LoginScreen({ navigation }) {
           return;
         }
 
+        // 🚀 1.BIS. VÉRIFICATION POUR LES PARENTS "NON LIÉS"
+        if (userData.role === 'parent') {
+          const { data: enfantsLies, error: verifError } = await supabase
+            .from('enfants')
+            .select('id')
+            .eq('parent_id', userId)
+            .limit(1);
+
+          if (verifError) throw new Error(verifError.message);
+
+          if (!enfantsLies || enfantsLies.length === 0) {
+            await supabase.auth.signOut(); // Déconnexion forcée
+            Alert.alert(
+              "Compte non lié 🚫", 
+              "Votre profil n'est rattaché à aucun dossier d'enfant. Veuillez vous rapprocher de la direction ou supprimer ce compte."
+            );
+            setLoading(false);
+            return;
+          }
+        }
+
         // 🚀 2. SI LE COMPTE EST VALIDE, ON ENREGISTRE LES NOTIFICATIONS
         await registerForPushNotificationsAsync(userId);
 
@@ -280,7 +301,7 @@ export default function LoginScreen({ navigation }) {
           </View>
 
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Developped by Abderrahim S © 2026</Text>
+            <Text style={styles.footerText}>Developped by A S © 2026</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

@@ -16,11 +16,12 @@ const logoAssets = {
 
 export default function PaiementsAdminScreen() {
   const [activeTab, setActiveTab] = useState('familles'); 
-  
+
   const [paiements, setPaiements] = useState([]);
   const [depenses, setDepenses] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingRelance, setLoadingRelance] = useState(false);
+  const [loadingRelanceIndividuelle, setLoadingRelanceIndividuelle] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -35,10 +36,9 @@ export default function PaiementsAdminScreen() {
   const [enfantsFamille, setEnfantsFamille] = useState([]);
   const [factTypeSaisie, setFactTypeSaisie] = useState('mensuel'); 
   const [factEnfantId, setFactEnfantId] = useState('');
-  
-  // 🚀 NOUVEAU: On remplace "factMois" par un tableau pour les sélections multiples
+
   const [selectedMoisList, setSelectedMoisList] = useState([]);
-  
+
   const [factService, setFactService] = useState('Cantine');
   const [factTitreExtra, setFactTitreExtra] = useState('');
   const [factMontant, setFactMontant] = useState('');
@@ -50,11 +50,11 @@ export default function PaiementsAdminScreen() {
 
   const [anneeActive, setAnneeActive] = useState('');
   const [nomCreche, setNomCreche] = useState('La Crèche');
-  
+
   const moisScolaires = ['Septembre', 'Octobre', 'Novembre', 'Décembre', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août'];
   const moisNomsCal = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
   const moisActuelStr = moisNomsCal[new Date().getMonth()]; 
-  
+
   const ordreMoisScolaire = {
     'Septembre': 1, 'Octobre': 2, 'Novembre': 3, 'Décembre': 4,
     'Janvier': 5, 'Février': 6, 'Mars': 7, 'Avril': 8, 'Mai': 9,
@@ -195,7 +195,7 @@ export default function PaiementsAdminScreen() {
   const ouvrirModalFamille = async (item) => {
     setFamilleSelectionnee(item);
     setSelectedForPrint([]); 
-    
+
     try {
       let query = supabase.from('enfants').select('id, prenom, nom');
       if (item.codeFamille) {
@@ -233,7 +233,6 @@ export default function PaiementsAdminScreen() {
     }
   };
 
-  // 🚀 NOUVELLE FONCTION POUR SÉLECTION MULTIPLE DES MOIS
   const toggleMoisSelection = (mois) => {
     if (selectedMoisList.includes(mois)) {
       setSelectedMoisList(selectedMoisList.filter(m => m !== mois));
@@ -245,7 +244,7 @@ export default function PaiementsAdminScreen() {
   const validerAjoutFacture = async () => {
     if (!factMontant) return alert("Veuillez indiquer un montant.");
     if (factTypeSaisie === 'mensuel' && selectedMoisList.length === 0) return alert("Veuillez sélectionner au moins un mois.");
-    
+
     setLoading(true);
     const anneePourTitre = anneeActive === 'Toutes' ? anneesDisponibles[2] : anneeActive;
     let typeBase = factTypeSaisie === 'mensuel' ? factService.toLowerCase() : 'extra';
@@ -253,7 +252,6 @@ export default function PaiementsAdminScreen() {
     try {
       const payloads = [];
 
-      // 🚀 CRÉATION DE PLUSIEURS FACTURES EN MÊME TEMPS
       if (factTypeSaisie === 'mensuel') {
         selectedMoisList.forEach(mois => {
           payloads.push({
@@ -316,7 +314,7 @@ export default function PaiementsAdminScreen() {
   };
 
   const executerSuppressionDepense = async (id) => { await supabase.from('depenses').delete().eq('id', id); rafraichirDonnees(); };
-  
+
   const supprimerDepense = (id) => {
     if (Platform.OS === 'web') { if (window.confirm("Voulez-vous supprimer cette dépense ?")) executerSuppressionDepense(id); } 
     else { Alert.alert("Supprimer", "Voulez-vous supprimer cette dépense ?", [{ text: "Annuler", style: "cancel" }, { text: "Supprimer", style: "destructive", onPress: () => executerSuppressionDepense(id) }]); }
@@ -356,7 +354,7 @@ export default function PaiementsAdminScreen() {
     }));
 
     const maxMontant = Math.max(...chartData.map(d => Math.max(d.recettes, d.depenses)), 1000); 
-    
+
     return { chartData, totalRecettesGlobal, totalDepensesGlobal, beneficeGlobal: totalRecettesGlobal - totalDepensesGlobal, maxMontant };
   };
 
@@ -374,7 +372,7 @@ export default function PaiementsAdminScreen() {
       const { error } = await supabase.from('paiements').update({ 
         statut: 'paye', date_paiement: dateAujourdhui, methode_paiement: methode 
       }).eq('id', id);
-      
+
       if (error) throw error;
       rafraichirDonnees(); 
       if (familleSelectionnee) {
@@ -429,11 +427,11 @@ export default function PaiementsAdminScreen() {
       const prenom = enfant.prenom || 'Inconnu';
       const anneeScolaire = enfant.annee_scolaire || 'Non définie';
       const classe = formatClassePourImpression(enfant.classe);
-      
+
       const dateEdition = facturesToPrint[0].date_paiement 
         ? new Date(facturesToPrint[0].date_paiement).toLocaleDateString('fr-FR') 
         : new Date().toLocaleDateString('fr-FR');
-      
+
       let logoUri = '';
       const crecheId = Constants.expoConfig?.extra?.crecheId || 'jeupousse';
       const selectedLogo = logoAssets[crecheId] || logoAssets.jeupousse;
@@ -444,7 +442,7 @@ export default function PaiementsAdminScreen() {
         logoUri = asset.localUri || asset.uri;
         if (Platform.OS === 'web' && logoUri.startsWith('/')) logoUri = window.location.origin + logoUri;
       } catch (e) {}
-      
+
       const htmlContent = `
         <!DOCTYPE html>
         <html lang="fr">
@@ -541,7 +539,7 @@ export default function PaiementsAdminScreen() {
     let effectiveYear;
 
     const isInscription = facture.type === 'inscription' || (facture.titre || '').toLowerCase().includes("inscription");
-    
+
     if (isInscription) {
       effectiveMonth = 7; 
     } else if (facture.mois && moisNomsCal.indexOf(facture.mois) !== -1) {
@@ -554,10 +552,10 @@ export default function PaiementsAdminScreen() {
     const matchYear = facture.titre?.match(/\((\d{4}-\d{4})\)/);
     if (matchYear && matchYear[1]) anneeScolaire = matchYear[1];
     else if (facture.enfants?.annee_scolaire) anneeScolaire = facture.enfants.annee_scolaire;
-    
+
     if (anneeScolaire && anneeScolaire.includes('-')) {
       const startYear = parseInt(anneeScolaire.split('-')[0], 10);
-      
+
       if (isInscription) {
         effectiveYear = startYear;
       } else {
@@ -592,7 +590,7 @@ export default function PaiementsAdminScreen() {
   paiementsFiltres.forEach(p => {
     const statutInfo = getStatutFacture(p);
     if (p.statut === 'en_verification') totalVerification += 1;
-    
+
     if (p.statut === 'en_attente') {
       if (statutInfo.code === 'retard') totalEnRetard += Number(p.montant);
       else if (statutInfo.code === 'actuel' || statutInfo.code === 'extra') totalCeMois += Number(p.montant);
@@ -683,6 +681,7 @@ export default function PaiementsAdminScreen() {
     }
   }, [paiements]);
 
+  // 🚀 RELANCE GLOBALE (TOUS LES PARENTS)
   const executerRelanceGlobale = async (famillesEnRetard) => {
     setLoadingRelance(true);
     try {
@@ -733,9 +732,66 @@ export default function PaiementsAdminScreen() {
     }
   };
 
+  // 🚀 RELANCE INDIVIDUELLE (UN SEUL PARENT)
+  const executerRelanceIndividuelle = async (famille) => {
+    setLoadingRelanceIndividuelle(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const adminId = user.id;
+
+      const totalRetard = famille.resteAPayerRetard;
+      if (totalRetard <= 0) {
+        alert("Cette famille n'a pas de retard de paiement.");
+        setLoadingRelanceIndividuelle(false);
+        return;
+      }
+
+      const texteRelance = `Bonjour, \nSauf erreur de notre part, nous vous informons que vous avez des factures en retard pour un montant total de ${totalRetard} Dhs.\n\nMerci de régulariser la situation au plus vite.\nLa Direction.`;
+
+      if (famille.originalParentId) {
+        // Enregistrement du message dans la base
+        await supabase.from('messages').insert([{ expediteur_id: adminId, destinataire_id: famille.originalParentId, texte: texteRelance }]);
+        
+        // Envoi de la notification Push Mobile
+        if (famille.expoToken) {
+          const apiUrli = (Platform.OS === 'web' && !__DEV__) ? '/api/expo-push' : 'https://exp.host/--/api/v2/push/send';
+          await fetch(apiUrli, { 
+            method: 'POST', 
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }, 
+            body: JSON.stringify([{ to: famille.expoToken, sound: 'default', priority: 'high', channelId: 'default', title: 'Rappel de Paiement ⚠️', body: `Retard de paiement de ${totalRetard} Dhs.`, data: { tab: 'factures' } }]) 
+          });
+        }
+
+        // Envoi de la notification Web Push
+        if (famille.webPushSub) {
+          try {
+            const subObj = typeof famille.webPushSub === 'string' ? JSON.parse(famille.webPushSub) : famille.webPushSub;
+            await supabase.functions.invoke('send-web-push', { body: { subscriptions: [subObj], payload: { title: 'Rappel ⚠️', body: `Retard de ${totalRetard} Dhs.`, data: { tab: 'factures' } } } });
+          } catch (e) {}
+        }
+        alert("Relance envoyée avec succès à cette famille !");
+      } else {
+        alert("Impossible de relancer : aucun compte parent lié à cette famille.");
+      }
+    } catch (error) { 
+      alert("Erreur : " + error.message); 
+    } finally { 
+      setLoadingRelanceIndividuelle(false); 
+    }
+  };
+
+  const confirmerRelanceIndividuelle = (famille) => {
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Envoyer une relance à ${famille.parent} pour ${famille.resteAPayerRetard} Dhs ?`)) executerRelanceIndividuelle(famille);
+    } else {
+      Alert.alert("Envoyer ?", `Relancer ${famille.parent} pour ${famille.resteAPayerRetard} Dhs ?`, [{ text: "Annuler", style: "cancel" }, { text: "Oui", onPress: () => executerRelanceIndividuelle(famille) }]);
+    }
+  };
+
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
-      
+
       <View style={styles.headerContainer}>
         <View style={styles.headerTopRow}>
           <Text style={styles.headerTitle}>Gestion Financière</Text>
@@ -743,7 +799,7 @@ export default function PaiementsAdminScreen() {
             <TouchableOpacity style={styles.refreshBtn} onPress={rafraichirDonnees} disabled={loading}>
               {loading ? <ActivityIndicator size="small" color="#4F46E5" /> : <Text style={{ fontSize: 16 }}>🔄</Text>}
             </TouchableOpacity>
-            
+
             <View style={styles.yearPickerWrapper}>
               <Picker selectedValue={anneeActive} onValueChange={(val) => setAnneeActive(val)} style={styles.pickerHeader}>
                 <Picker.Item label="Toutes années" value="Toutes" />
@@ -786,7 +842,7 @@ export default function PaiementsAdminScreen() {
             <View style={[styles.statBox, {borderColor: '#FECACA', backgroundColor: '#FEF2F2'}]}><Text style={[styles.statLabel, {color: '#EF4444'}]}>Retards</Text><Text style={[styles.statValue, {color: '#EF4444'}]}>{totalEnRetard} Dhs</Text></View>
             <View style={[styles.statBox, {borderColor: '#FDE68A', backgroundColor: '#FFFBEB'}]}><Text style={[styles.statLabel, {color: '#F59E0B'}]}>Attente</Text><Text style={[styles.statValue, {color: '#F59E0B'}]}>{totalCeMois} Dhs</Text></View>
           </View>
-          
+
           {totalEnRetard > 0 && (
             <TouchableOpacity style={styles.relanceGlobaleBtn} onPress={envoyerRelanceGlobale} disabled={loadingRelance}>
               {loadingRelance ? <ActivityIndicator color="#FFF" /> : <Text style={styles.relanceGlobaleText}>🔔 Relancer pour les retards</Text>}
@@ -804,8 +860,7 @@ export default function PaiementsAdminScreen() {
                 const aPayer = item.resteAPayerActuel > 0;
                 return (
                   <View style={[styles.familyCard, aVerifier ? {borderLeftColor: '#8B5CF6'} : (item.resteAPayerRetard > 0) ? {borderLeftColor: '#EF4444'} : aPayer ? {borderLeftColor: '#F59E0B'} : {borderLeftColor: '#E2E8F0'}]}>
-                    
-                    {/* 🚀 BOUTON ÉPINGLE (PIN) EN HAUT À DROITE */}
+
                     <TouchableOpacity 
                       style={{ position: 'absolute', top: 12, right: 15, zIndex: 10, padding: 6 }} 
                       onPress={() => toggleEpingleFamille(item)}
@@ -818,7 +873,7 @@ export default function PaiementsAdminScreen() {
                       <View style={{flex: 1, paddingRight: 25}}>
                         <Text style={styles.familyName}>👦 {item.enfantsArray.length > 0 ? item.enfantsArray.join(' / ') : 'Enfant Inconnu'}</Text>
                         <Text style={{fontSize: 13, color: '#475569', marginTop: 2, fontWeight: '600'}}>👤 Parent : {item.parent}</Text>
-                        
+
                         {aVerifier ? <Text style={{color: '#8B5CF6', fontWeight: 'bold', fontSize: 13, marginTop: 4}}>👀 {item.aVerifier} à vérifier</Text> 
                         : item.resteAPayerRetard > 0 ? <Text style={styles.familyAlert}>⚠️ Retard: {item.resteAPayerRetard} Dhs</Text> 
                         : aPayer ? <Text style={{color: '#F59E0B', fontSize: 13, marginTop: 6, fontWeight: '700'}}>⏳ À payer: {item.resteAPayerActuel} Dhs</Text> 
@@ -866,7 +921,7 @@ export default function PaiementsAdminScreen() {
 
       {activeTab === 'bilan' && (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-          
+
           <View style={styles.kpiContainer}>
             <View style={[styles.kpiCard, { borderColor: '#10B981', backgroundColor: '#ECFDF5' }]}>
               <Text style={[styles.kpiTitle, { color: '#047857' }]}>Recettes</Text>
@@ -969,8 +1024,19 @@ export default function PaiementsAdminScreen() {
               <Text style={styles.addFactureSpecialText}>+ Créer une facture exceptionnelle</Text>
             </TouchableOpacity>
 
+            {/* 🚀 BOUTON RELANCE INDIVIDUELLE */}
+            {familleSelectionnee?.resteAPayerRetard > 0 && (
+              <TouchableOpacity 
+                style={[styles.addFactureSpecialBtn, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]} 
+                onPress={() => confirmerRelanceIndividuelle(familleSelectionnee)}
+                disabled={loadingRelanceIndividuelle}
+              >
+                {loadingRelanceIndividuelle ? <ActivityIndicator color="#EF4444" /> : <Text style={[styles.addFactureSpecialText, { color: '#EF4444' }]}>🔔 Envoyer une relance de retard ({familleSelectionnee.resteAPayerRetard} Dhs)</Text>}
+              </TouchableOpacity>
+            )}
+
             <ScrollView showsVerticalScrollIndicator={false} style={{marginTop: 5}}>
-              
+
               {/* Factures en vérification */}
               {familleSelectionnee?.factures?.filter(f => f.statut === 'en_verification').map(item => (
                 <View key={item.id} style={[styles.factureCard, {borderLeftColor: '#8B5CF6', backgroundColor: '#F9F5FF'}]}>
@@ -1038,7 +1104,7 @@ export default function PaiementsAdminScreen() {
                         {isSelected && <Text style={{color: 'white', fontWeight: 'bold', fontSize: 12}}>✓</Text>}
                       </View>
                     </TouchableOpacity>
-                    
+
                     <View style={{flex: 1}}>
                       <View style={styles.factureHeader}>
                         <View style={{flex: 1, paddingRight: 10}}>
@@ -1070,11 +1136,11 @@ export default function PaiementsAdminScreen() {
                 <View style={[styles.modalContentSmall, {width: '90%'}]}>
                   <Text style={styles.modalTitleCenter}>Méthode de Paiement</Text>
                   <Text style={styles.labelDesc}>Comment ce paiement a-t-il été réglé ?</Text>
-                  
+
                   <TouchableOpacity style={[styles.payBtnPrint, {backgroundColor: '#10B981'}]} onPress={() => marquerCommePaye(factureAForcer.id, 'Espèces')}>
                     <Text style={styles.btnTextWhite}>💵 Espèces</Text>
                   </TouchableOpacity>
-                  
+
                   <TouchableOpacity style={[styles.payBtnPrint, {backgroundColor: '#3B82F6', marginTop: 10}]} onPress={() => marquerCommePaye(factureAForcer.id, 'Chèque')}>
                     <Text style={styles.btnTextWhite}>✍️ Chèque</Text>
                   </TouchableOpacity>
@@ -1082,7 +1148,7 @@ export default function PaiementsAdminScreen() {
                   <TouchableOpacity style={[styles.payBtnPrint, {backgroundColor: '#8B5CF6', marginTop: 10}]} onPress={() => marquerCommePaye(factureAForcer.id, 'Virement')}>
                     <Text style={styles.btnTextWhite}>🏦 Virement Bancaire</Text>
                   </TouchableOpacity>
-                  
+
                   <TouchableOpacity style={[styles.cancelBtn, {marginTop: 15}]} onPress={() => setModalForcePaymentVisible(false)}>
                     <Text style={styles.cancelBtnText}>Annuler</Text>
                   </TouchableOpacity>
@@ -1099,7 +1165,7 @@ export default function PaiementsAdminScreen() {
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContent, {height: '85%', paddingBottom: Platform.OS === 'ios' ? 40 : 20}]}>
               <Text style={styles.modalTitleCenter}>Créer une facture</Text>
-              
+
               <ScrollView showsVerticalScrollIndicator={false}>
                 <Text style={styles.label}>Pour quel enfant ?</Text>
                 <View style={styles.pickerContainer}>
@@ -1122,10 +1188,13 @@ export default function PaiementsAdminScreen() {
                   <>
                     <Text style={styles.label}>Service</Text>
                     <View style={styles.pickerContainer}>
+                      {/* 🚀 NOUVELLES OPTIONS AJOUTÉES ICI */}
                       <Picker selectedValue={factService} onValueChange={setFactService}>
                         <Picker.Item label="Scolarité" value="Scolarité" />
                         <Picker.Item label="Cantine" value="Cantine" />
                         <Picker.Item label="Transport" value="Transport" />
+                        <Picker.Item label="Garde" value="Garde" />
+                        <Picker.Item label="Frais d'inscription" value="Frais d'inscription" />
                       </Picker>
                     </View>
                     <Text style={styles.label}>Mois concerné(s) - Sélectionnez un ou plusieurs</Text>
@@ -1179,7 +1248,7 @@ const styles = StyleSheet.create({
   refreshBtn: { backgroundColor: '#EEF2FF', width: 36, height: 36, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginRight: 10, borderWidth: 1, borderColor: '#C7D2FE' },
   yearPickerWrapper: { flex: 1, backgroundColor: '#EEF2FF', borderRadius: 8, borderWidth: 1, borderColor: '#C7D2FE', height: 36, justifyContent: 'center', minWidth: 140 },
   pickerHeader: { height: 36, color: '#4F46E5', fontWeight: 'bold' },
-  
+
   searchRow: { flexDirection: 'row', paddingHorizontal: 20, marginBottom: 15 },
   searchContainer: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', paddingHorizontal: 12, borderRadius: 10, height: 44, borderWidth: 1, borderColor: '#E2E8F0' },
   searchIcon: { fontSize: 16, marginRight: 8 },
@@ -1210,7 +1279,7 @@ const styles = StyleSheet.create({
   depenseTitre: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
   depenseDate: { fontSize: 12, color: '#64748B', marginTop: 2 },
   depenseMontant: { fontSize: 16, fontWeight: '900', color: '#EF4444' },
-  
+
   kpiContainer: { flexDirection: 'row', paddingHorizontal: 20, marginTop: 10, justifyContent: 'space-between' },
   kpiCard: { flex: 0.48, padding: 20, borderRadius: 16, borderWidth: 1, alignItems: 'center' },
   kpiTitle: { fontSize: 14, fontWeight: '800', textTransform: 'uppercase', marginBottom: 8 },
@@ -1223,7 +1292,7 @@ const styles = StyleSheet.create({
   legendItem: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 10 },
   legendDot: { width: 12, height: 12, borderRadius: 6, marginRight: 6 },
   legendText: { fontSize: 13, color: '#64748B', fontWeight: '700' },
-  
+
   chartScrollView: { marginHorizontal: 20, paddingBottom: 10 },
   chartContainer: { flexDirection: 'row', alignItems: 'flex-end', height: 180, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', paddingBottom: 5 },
   chartColumn: { alignItems: 'center', width: 45, marginRight: 10 },
@@ -1238,10 +1307,10 @@ const styles = StyleSheet.create({
   bilanRecette: { fontSize: 15, fontWeight: '700', color: '#10B981' },
   bilanDepense: { fontSize: 15, fontWeight: '700', color: '#EF4444' },
   bilanRowResult: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, padding: 16, borderRadius: 12, alignItems: 'center' },
-  
+
   modalOverlayCenter: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.8)', justifyContent: 'center', alignItems: 'center' },
   modalContentSmall: { width: '100%', backgroundColor: '#FFFFFF', padding: 24, borderRadius: 20, elevation: 10 },
-  
+
   modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#FFFFFF', padding: 24, borderTopLeftRadius: 30, borderTopRightRadius: 30 },
   modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
@@ -1279,7 +1348,7 @@ const styles = StyleSheet.create({
   cancelBtnText: { color: '#64748B', fontWeight: '700' },
   relanceGlobaleBtn: { backgroundColor: '#EF4444', marginHorizontal: 20, marginTop: 10, padding: 14, borderRadius: 12, alignItems: 'center', elevation: 4 },
   relanceGlobaleText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 14 },
-  
+
   checkboxContainer: { paddingRight: 15, justifyContent: 'center' },
   checkbox: { width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: '#CBD5E1', justifyContent: 'center', alignItems: 'center' },
   checkboxChecked: { backgroundColor: '#10B981', borderColor: '#10B981' },

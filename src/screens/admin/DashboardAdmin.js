@@ -391,7 +391,7 @@ export default function DashboardAdmin({ navigation }) {
           <TouchableOpacity style={[styles.card, { borderBottomColor: '#9E9E9E' }]} onPress={() => navigation.navigate('ArchiveAdminScreen')}><View style={[styles.iconCircle, { backgroundColor: '#F5F5F5' }]}><Text style={styles.cardIcon}>📦</Text></View><Text style={styles.cardTitle}>Archive & Espace</Text><Text style={styles.cardDesc}>Archiver & libérer</Text></TouchableOpacity>
 
         </View>
-        <View style={styles.footer}><Text style={styles.footerText}>Developped by Abderrahim S © 2026</Text></View>
+        <View style={styles.footer}><Text style={styles.footerText}>Developped by A S © 2026</Text></View>
       </ScrollView>
 
       {/* MODAL 1 : ANNIVERSAIRES */}

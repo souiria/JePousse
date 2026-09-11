@@ -225,7 +225,7 @@ export default function CahierAdminScreen() {
     return matchClasse && matchTexte;
   });
 
-  const renderFooter = () => <View style={styles.footer}><Text style={styles.footerText}>Developped by Abderrahim S © 2026</Text></View>;
+  const renderFooter = () => <View style={styles.footer}><Text style={styles.footerText}>Developped by A S © 2026</Text></View>;
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: currentTheme.background }]} edges={['top', 'left', 'right', 'bottom']}>
