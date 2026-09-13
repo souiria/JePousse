@@ -197,7 +197,9 @@ export default function DashboardParentScreen({ navigation }) {
     verifierTokenStatus();
     if (Platform.OS !== 'web') enregistrerNotificationsNatives();
 
-    const realtimeChannel = supabase.channel('parent_realtime')
+    // 🚀 FIX CRASH ANTI-REMOUNT : Utilisation d'un nom de channel unique
+    const uniqueChannelName = `parent_realtime_${Date.now()}`;
+    const realtimeChannel = supabase.channel(uniqueChannelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'alertes_medicales' }, () => { chargerDonneesParent(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cahier_liaison' }, () => { chargerDonneesParent(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'progres_enfants' }, () => { chargerDonneesParent(); })
@@ -205,7 +207,11 @@ export default function DashboardParentScreen({ navigation }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'publications' }, () => { chargerMur(); })
       .subscribe();
 
-    return () => { if (realtimeChannel) supabase.removeChannel(realtimeChannel); };
+    return () => { 
+      if (realtimeChannel) {
+        supabase.removeChannel(realtimeChannel); 
+      }
+    };
   }, []);
 
   useFocusEffect(React.useCallback(() => { calculerMessagesNonLus(); }, []));
@@ -228,6 +234,11 @@ export default function DashboardParentScreen({ navigation }) {
   };
 
   const enregistrerNotificationsNatives = async () => {
+    if (Constants.appOwnership === 'expo' && Platform.OS === 'android') {
+      setNotifTokenStatus('⚠️ Expo Go (Push désactivé)');
+      return;
+    }
+
     if (Platform.OS === 'android') await Notifications.setNotificationChannelAsync('default', { name: 'default', importance: Notifications.AndroidImportance.MAX });
     if (Device.isDevice) {
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -443,6 +454,7 @@ export default function DashboardParentScreen({ navigation }) {
       const { data: { user } } = await supabase.auth.getUser();
       const { data: existante } = await supabase.from('demandes_attestation').select('id').eq('enfant_id', enfant.id).eq('statut', 'en_attente');
       if (existante && existante.length > 0) { Alert.alert("Info", "Demande déjà en cours."); setLoading(false); return; }
+      
       await supabase.from('demandes_attestation').insert([{ enfant_id: enfant.id, parent_id: user.id, statut: 'en_attente' }]);
       setStatutAttestations(prev => ({ ...prev, [enfant.id]: 'en_attente' })); Alert.alert("Succès", "Demande envoyée.");
     } catch (error) { Alert.alert("Erreur", error.message); } finally { setLoading(false); }
@@ -760,7 +772,6 @@ export default function DashboardParentScreen({ navigation }) {
                       </View>
                     </View>
 
-                    {/* 🚀 NOUVEAU BLOC ATTESTATION DÉDIÉ ET CLAIR */}
                     <View style={styles.attestationBlock}>
                       <View style={styles.attestationHeader}>
                         <Text style={styles.attestationTitleText}>📄 Attestation de scolarité</Text>
@@ -854,9 +865,9 @@ export default function DashboardParentScreen({ navigation }) {
             {facturesEnAttente.length === 0 ? <Text style={styles.emptyText}>Aucune facture en attente de paiement. 🎉</Text> : 
               facturesEnAttente.map(item => {
                 const moisIndexZero = moisNomsCal.indexOf(item.mois);
-                let borderColor = '#94A3B8'; // Gris par défaut (À venir / Neutre)
-                let textColor = '#1E293B';   // Noir
-                let btnColor = '#0F172A';    // Noir
+                let borderColor = '#94A3B8';
+                let textColor = '#1E293B';
+                let btnColor = '#0F172A';
                 
                 if (moisIndexZero !== -1) {
                   const today = new Date();
@@ -1164,11 +1175,11 @@ const styles = StyleSheet.create({
   ressourceImage: { width: '100%', height: 400, borderRadius: 10, backgroundColor: '#F8FAFC' },
   emptyText: { textAlign: 'center', color: '#94A3B8', fontStyle: 'italic', marginTop: 30, fontWeight: '500' },
   
-  factureCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, marginBottom: 15, elevation: 3, borderLeftWidth: 5 },
+  factureCard: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, marginBottom: 15, elevation: 3, borderLeftWidth: 5, borderLeftColor: '#F44336' },
   factureHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 15 },
-  factureTitre: { fontSize: 16, fontWeight: '800' },
+  factureTitre: { fontSize: 16, fontWeight: '800', color: '#1E293B' },
   factureEnfant: { fontSize: 13, color: '#64748B', marginTop: 4, fontWeight: '600' },
-  factureMontant: { fontSize: 18, fontWeight: '900' },
+  factureMontant: { fontSize: 18, fontWeight: '900', color: '#F44336' },
   payButton: { backgroundColor: '#2196F3', padding: 14, borderRadius: 10, alignItems: 'center' },
   payButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
   

@@ -2,6 +2,7 @@ import { Picker } from '@react-native-picker/picker';
 import { useFocusEffect } from '@react-navigation/native';
 import { Asset } from 'expo-asset';
 import Constants from 'expo-constants';
+import * as FileSystem from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useCallback, useEffect, useState } from 'react';
@@ -47,6 +48,9 @@ export default function PaiementsAdminScreen() {
   const [titreDepense, setTitreDepense] = useState('');
   const [montantDepense, setMontantDepense] = useState('');
   const [categorieDepense, setCategorieDepense] = useState('salaire'); 
+
+  // 🚀 État pour la modale d'export Excel
+  const [modalExportVisible, setModalExportVisible] = useState(false);
 
   const [anneeActive, setAnneeActive] = useState('');
   const [nomCreche, setNomCreche] = useState('La Crèche');
@@ -191,6 +195,82 @@ export default function PaiementsAdminScreen() {
 
   const paiementsFiltres = paiements.filter(p => filtrerParAnnee(p, anneeActive));
   const depensesFiltres = depenses.filter(d => filtrerDepenseParAnnee(d, anneeActive));
+
+  // 🚀 FONCTION EXPORT EXCEL
+  const genererExcel = async (typeExport) => {
+    setModalExportVisible(false);
+    try {
+      const BOM = "\uFEFF";
+      let csvString = "Parent;Enfant;Classe;Mois;Titre Facture;Montant (Dhs);Statut;Methode Paiement;Date de paiement\n";
+      let totalMontant = 0;
+
+      let dataToExport = paiementsFiltres; 
+      
+      if (typeExport === 'paye') {
+        dataToExport = dataToExport.filter(f => f.statut === 'paye');
+      } else if (typeExport === 'impaye') {
+        dataToExport = dataToExport.filter(f => f.statut !== 'paye');
+      }
+
+      dataToExport.forEach(p => {
+        let parentName = 'Sans compte';
+        if (p.enfants?.familles) {
+          const f = p.enfants.familles;
+          const pere = f.pere_prenom ? `${f.pere_prenom} ${f.pere_nom || ''}`.trim() : '';
+          const mere = f.mere_prenom ? `${f.mere_prenom} ${f.mere_nom || ''}`.trim() : '';
+          if (pere && mere) parentName = `${pere} & ${mere}`;
+          else if (pere) parentName = pere;
+          else if (mere) parentName = mere;
+        } else if (p.enfants?.utilisateurs) {
+          parentName = `${p.enfants.utilisateurs.prenom} ${p.enfants.utilisateurs.nom}`;
+        }
+
+        const enfantName = p.enfants ? `${p.enfants.prenom || ''} ${p.enfants.nom || ''}`.trim() : 'Inconnu';
+        const classe = p.enfants?.classe || 'Non classé';
+        const mois = p.mois || '';
+        const titre = (p.titre || '').replace(/;/g, ',');
+        const montant = Number(p.montant) || 0;
+        
+        totalMontant += montant;
+
+        let statutStr = p.statut;
+        if (p.statut === 'paye') statutStr = 'Payé';
+        else if (p.statut === 'en_verification') statutStr = 'En vérification';
+        else if (p.statut === 'en_attente') {
+          const infoStatut = getStatutFacture(p);
+          statutStr = infoStatut.label; 
+        }
+
+        const methode = p.methode_paiement || '';
+        const datePaiement = p.date_paiement ? new Date(p.date_paiement).toLocaleDateString('fr-FR') : '';
+
+        csvString += `"${parentName}";"${enfantName}";"${classe}";"${mois}";"${titre}";"${montant}";"${statutStr}";"${methode}";"${datePaiement}"\n`;
+      });
+
+      // LIGNE DE TOTAL À LA FIN
+      csvString += `\n;;;;TOTAL EXPORT;"${totalMontant} Dhs";;;\n`;
+
+      const finalCsv = BOM + csvString;
+
+      if (Platform.OS === 'web') {
+        const blob = new Blob([finalCsv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `Rapport_${typeExport}_${anneeActive || 'Global'}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        const filename = FileSystem.documentDirectory + `Rapport_${typeExport}_${anneeActive || 'Global'}.csv`;
+        await FileSystem.writeAsStringAsync(filename, finalCsv, { encoding: FileSystem.EncodingType.UTF8 });
+        await Sharing.shareAsync(filename, { dialogTitle: 'Exporter le rapport Excel' });
+      }
+    } catch (error) {
+      Alert.alert("Erreur", "Impossible de générer le fichier Excel.");
+      console.error(error);
+    }
+  };
 
   const ouvrirModalFamille = async (item) => {
     setFamilleSelectionnee(item);
@@ -526,6 +606,7 @@ export default function PaiementsAdminScreen() {
     } catch (error) { alert("Erreur d'impression : " + error.message); }
   };
 
+  // 🚀 LOGIQUE INTELLIGENTE DES DATES
   const getStatutFacture = (facture) => {
     if (facture.statut === 'paye') return { label: 'Payé', color: '#10B981', code: 'paye' };
     if (facture.statut === 'en_verification') return { label: 'À vérifier 👀', color: '#8B5CF6', code: 'verification' };
@@ -535,29 +616,40 @@ export default function PaiementsAdminScreen() {
     const currentMonth = currentDate.getMonth(); 
     const currentDay = currentDate.getDate();
 
-    let effectiveMonth;
-    let effectiveYear;
+    let moisStr = facture.mois;
+    if (!moisStr && facture.titre) {
+      const titreLower = facture.titre.toLowerCase();
+      const moisFound = moisNomsCal.find(m => titreLower.includes(m.toLowerCase()));
+      if (moisFound) moisStr = moisFound;
+    }
 
     const isInscription = facture.type === 'inscription' || (facture.titre || '').toLowerCase().includes("inscription");
 
-    if (isInscription) {
+    let effectiveMonth = currentDate.getMonth(); 
+    if (moisStr && moisNomsCal.indexOf(moisStr) !== -1) {
+      effectiveMonth = moisNomsCal.indexOf(moisStr);
+    } else if (isInscription) {
       effectiveMonth = 7; 
-    } else if (facture.mois && moisNomsCal.indexOf(facture.mois) !== -1) {
-      effectiveMonth = moisNomsCal.indexOf(facture.mois);
     } else {
       effectiveMonth = new Date(facture.date_creation).getMonth();
     }
 
+    let effectiveYear = currentYear;
     let anneeScolaire = null;
     const matchYear = facture.titre?.match(/\((\d{4}-\d{4})\)/);
-    if (matchYear && matchYear[1]) anneeScolaire = matchYear[1];
-    else if (facture.enfants?.annee_scolaire) anneeScolaire = facture.enfants.annee_scolaire;
+    
+    if (matchYear && matchYear[1]) {
+      anneeScolaire = matchYear[1];
+    } else if (facture.enfants?.annee_scolaire) {
+      anneeScolaire = facture.enfants.annee_scolaire;
+    }
 
     if (anneeScolaire && anneeScolaire.includes('-')) {
       const startYear = parseInt(anneeScolaire.split('-')[0], 10);
-
-      if (isInscription) {
-        effectiveYear = startYear;
+      
+      if (isInscription && (!moisStr || moisStr === 'Août')) {
+        effectiveYear = startYear; 
+        effectiveMonth = 7; 
       } else {
         effectiveYear = effectiveMonth >= 8 ? startYear : startYear + 1;
       }
@@ -568,14 +660,14 @@ export default function PaiementsAdminScreen() {
     if (effectiveYear < currentYear) {
       return { label: 'En retard', color: '#EF4444', code: 'retard' };
     } else if (effectiveYear > currentYear) {
-      return { label: 'À venir', color: '#3B82F6', code: 'futur' };
+      return { label: 'À venir', color: '#94A3B8', code: 'futur' };
     } else {
       if (effectiveMonth < currentMonth) {
         return { label: 'En retard', color: '#EF4444', code: 'retard' };
       } else if (effectiveMonth > currentMonth) {
-        return { label: 'À venir', color: '#3B82F6', code: 'futur' };
+        return { label: 'À venir', color: '#94A3B8', code: 'futur' };
       } else {
-        if (currentDay >= 5) {
+        if (currentDay > 5) {
           return { label: 'En retard', color: '#EF4444', code: 'retard' };
         } else {
           return { label: 'À payer (Avant le 5)', color: '#F59E0B', code: 'actuel' };
@@ -681,7 +773,6 @@ export default function PaiementsAdminScreen() {
     }
   }, [paiements]);
 
-  // 🚀 RELANCE GLOBALE (TOUS LES PARENTS)
   const executerRelanceGlobale = async (famillesEnRetard) => {
     setLoadingRelance(true);
     try {
@@ -732,7 +823,6 @@ export default function PaiementsAdminScreen() {
     }
   };
 
-  // 🚀 RELANCE INDIVIDUELLE (UN SEUL PARENT)
   const executerRelanceIndividuelle = async (famille) => {
     setLoadingRelanceIndividuelle(true);
     try {
@@ -749,10 +839,8 @@ export default function PaiementsAdminScreen() {
       const texteRelance = `Bonjour, \nSauf erreur de notre part, nous vous informons que vous avez des factures en retard pour un montant total de ${totalRetard} Dhs.\n\nMerci de régulariser la situation au plus vite.\nLa Direction.`;
 
       if (famille.originalParentId) {
-        // Enregistrement du message dans la base
         await supabase.from('messages').insert([{ expediteur_id: adminId, destinataire_id: famille.originalParentId, texte: texteRelance }]);
         
-        // Envoi de la notification Push Mobile
         if (famille.expoToken) {
           const apiUrli = (Platform.OS === 'web' && !__DEV__) ? '/api/expo-push' : 'https://exp.host/--/api/v2/push/send';
           await fetch(apiUrli, { 
@@ -762,7 +850,6 @@ export default function PaiementsAdminScreen() {
           });
         }
 
-        // Envoi de la notification Web Push
         if (famille.webPushSub) {
           try {
             const subObj = typeof famille.webPushSub === 'string' ? JSON.parse(famille.webPushSub) : famille.webPushSub;
@@ -787,7 +874,6 @@ export default function PaiementsAdminScreen() {
       Alert.alert("Envoyer ?", `Relancer ${famille.parent} pour ${famille.resteAPayerRetard} Dhs ?`, [{ text: "Annuler", style: "cancel" }, { text: "Oui", onPress: () => executerRelanceIndividuelle(famille) }]);
     }
   };
-
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
@@ -965,6 +1051,16 @@ export default function PaiementsAdminScreen() {
             </View>
           </ScrollView>
 
+          {/* 🚀 NOUVEAU BOUTON D'EXPORT EXCEL */}
+          <View style={{ paddingHorizontal: 20, marginTop: 10, marginBottom: 20 }}>
+            <TouchableOpacity 
+              style={{ backgroundColor: '#0F172A', padding: 15, borderRadius: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', elevation: 3 }} 
+              onPress={() => setModalExportVisible(true)}
+            >
+              <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 15 }}>📊 Exporter le rapport Excel</Text>
+            </TouchableOpacity>
+          </View>
+
           <Text style={styles.sectionTitle}>Rapport par mois</Text>
           {statsBilan.chartData.map((item, index) => (
              item.recettes > 0 || item.depenses > 0 ? (
@@ -1024,7 +1120,6 @@ export default function PaiementsAdminScreen() {
               <Text style={styles.addFactureSpecialText}>+ Créer une facture exceptionnelle</Text>
             </TouchableOpacity>
 
-            {/* 🚀 BOUTON RELANCE INDIVIDUELLE */}
             {familleSelectionnee?.resteAPayerRetard > 0 && (
               <TouchableOpacity 
                 style={[styles.addFactureSpecialBtn, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]} 
@@ -1037,7 +1132,6 @@ export default function PaiementsAdminScreen() {
 
             <ScrollView showsVerticalScrollIndicator={false} style={{marginTop: 5}}>
 
-              {/* Factures en vérification */}
               {familleSelectionnee?.factures?.filter(f => f.statut === 'en_verification').map(item => (
                 <View key={item.id} style={[styles.factureCard, {borderLeftColor: '#8B5CF6', backgroundColor: '#F9F5FF'}]}>
                   <View style={styles.factureHeader}>
@@ -1060,7 +1154,6 @@ export default function PaiementsAdminScreen() {
                 </View>
               ))}
 
-              {/* Factures en attente */}
               {familleSelectionnee?.factures?.filter(f => f.statut === 'en_attente').map(item => {
                 const info = item.infoStatut;
                 return (
@@ -1071,9 +1164,9 @@ export default function PaiementsAdminScreen() {
                           <View style={styles.badgeEnfant}><Text style={styles.badgeEnfantText}>👦 {item.enfants?.prenom || 'Inconnu'}</Text></View>
                           <Text style={{color: info.color, fontWeight:'bold', fontSize: 11}}>{info.label}</Text>
                         </View>
-                        <Text style={styles.titreFacture}>{item.titre}</Text>
+                        <Text style={[styles.titreFacture, { color: info.code === 'futur' ? '#1E293B' : info.color }]}>{item.titre}</Text>
                       </View>
-                      <Text style={[styles.montantFacture, {color: info.color}]}>{item.montant} Dhs</Text>
+                      <Text style={[styles.montantFacture, {color: info.code === 'futur' ? '#0F172A' : info.color}]}>{item.montant} Dhs</Text>
                     </View>
                     <View style={styles.actionsRowModal}>
                       <TouchableOpacity style={styles.forcerPaiementBtn} onPress={() => preparerForcerPaiement(item)}>
@@ -1087,7 +1180,6 @@ export default function PaiementsAdminScreen() {
                 );
               })}
 
-              {/* Historique Payées avec Checkbox Multiple */}
               {familleSelectionnee?.factures?.filter(f => f.statut === 'paye').length > 0 && (
                 <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, marginBottom: 10}}>
                   <Text style={[styles.sectionTitle, {marginHorizontal: 0, color: '#10B981'}]}>Historique réglé</Text>
@@ -1159,6 +1251,32 @@ export default function PaiementsAdminScreen() {
         </View>
       </Modal>
 
+      {/* 🚀 MODAL POUR SÉLECTIONNER L'EXPORT EXCEL */}
+      <Modal visible={modalExportVisible} animationType="fade" transparent={true}>
+        <View style={styles.modalOverlayCenter}>
+          <View style={[styles.modalContentSmall, { width: '85%' }]}>
+            <Text style={styles.modalTitleCenter}>Format d'exportation</Text>
+            <Text style={styles.labelDesc}>Que souhaitez-vous exporter pour l'année {anneeActive || 'Global'} ?</Text>
+
+            <TouchableOpacity style={[styles.payBtnPrint, {backgroundColor: '#10B981', marginBottom: 10}]} onPress={() => genererExcel('paye')}>
+              <Text style={styles.btnTextWhite}>✅ Uniquement les Payées</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.payBtnPrint, {backgroundColor: '#EF4444', marginBottom: 10}]} onPress={() => genererExcel('impaye')}>
+              <Text style={styles.btnTextWhite}>⚠️ Impayées (En attente / Retard)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.payBtnPrint, {backgroundColor: '#4F46E5'}]} onPress={() => genererExcel('tout')}>
+              <Text style={styles.btnTextWhite}>📑 Tout exporter (Mixte)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.cancelBtn, {marginTop: 15}]} onPress={() => setModalExportVisible(false)}>
+              <Text style={styles.cancelBtnText}>Annuler</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* MODAL CRÉER FACTURE MANUELLE */}
       <Modal visible={modalAddFactureVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
@@ -1188,7 +1306,6 @@ export default function PaiementsAdminScreen() {
                   <>
                     <Text style={styles.label}>Service</Text>
                     <View style={styles.pickerContainer}>
-                      {/* 🚀 NOUVELLES OPTIONS AJOUTÉES ICI */}
                       <Picker selectedValue={factService} onValueChange={setFactService}>
                         <Picker.Item label="Scolarité" value="Scolarité" />
                         <Picker.Item label="Cantine" value="Cantine" />

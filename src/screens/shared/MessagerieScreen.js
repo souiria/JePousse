@@ -48,25 +48,46 @@ export default function MessagerieScreen() {
       setRole(profil.role);
 
       if (profil.role === 'admin') {
-        const { data: parents } = await supabase.from('utilisateurs').select('*').eq('role', 'parent').order('prenom');
+        const { data: parents } = await supabase.from('utilisateurs').select('*').eq('role', 'parent');
         
         const derniereLecture = profil.derniere_lecture_messagerie || '2000-01-01T00:00:00.000Z';
-        const { data: unreadMsgs } = await supabase
+        
+        // Fetch ALL messages where the admin is either the sender or receiver to find the last activity
+        const { data: allMessages } = await supabase
           .from('messages')
-          .select('expediteur_id')
-          .eq('destinataire_id', profil.id)
-          .gt('date_creation', derniereLecture);
+          .select('expediteur_id, destinataire_id, date_creation')
+          .or(`destinataire_id.eq.${profil.id},expediteur_id.eq.${profil.id}`);
 
-        const unreadSenderIds = new Set(unreadMsgs?.map(m => m.expediteur_id) || []);
+        const lastActivityMap = {};
+        const unreadSenderIds = new Set();
 
-        const contactsWithUnread = (parents || []).map(p => ({
+        if (allMessages) {
+          allMessages.forEach(m => {
+            // Determine who the other person is
+            const otherUserId = m.expediteur_id === profil.id ? m.destinataire_id : m.expediteur_id;
+            
+            // Track the most recent message timestamp for this contact
+            if (!lastActivityMap[otherUserId] || new Date(m.date_creation) > new Date(lastActivityMap[otherUserId])) {
+              lastActivityMap[otherUserId] = m.date_creation;
+            }
+
+            // If the message was sent TO the admin AND is newer than the last read time, mark as unread
+            if (m.destinataire_id === profil.id && new Date(m.date_creation) > new Date(derniereLecture)) {
+              unreadSenderIds.add(m.expediteur_id);
+            }
+          });
+        }
+
+        const contactsEnrichis = (parents || []).map(p => ({
           ...p,
-          hasUnread: unreadSenderIds.has(p.id)
+          hasUnread: unreadSenderIds.has(p.id),
+          lastActivity: lastActivityMap[p.id] || '2000-01-01T00:00:00.000Z' // Default old date if no messages
         }));
 
-        contactsWithUnread.sort((a, b) => (b.hasUnread === a.hasUnread ? 0 : b.hasUnread ? 1 : -1));
+        // 🚀 FIX: Sort chronologically by last activity (most recent first)
+        contactsEnrichis.sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
 
-        setContacts(contactsWithUnread);
+        setContacts(contactsEnrichis);
         marquerMessagesCommeLus(user.id);
 
       } else {
@@ -134,6 +155,7 @@ export default function MessagerieScreen() {
       Alert.alert("Succès", "Message envoyé à tous les parents !");
       setIsBroadcastModalVisible(false);
       setBroadcastText('');
+      initialiserMessagerie(); // Rafraîchir pour remonter tous les contacts en haut
     } catch (err) {
       Alert.alert("Erreur", "Une erreur est survenue lors de la diffusion.");
       console.log(err);
@@ -212,8 +234,20 @@ export default function MessagerieScreen() {
   };
 
   const ouvrirConversation = (contact) => {
+    // Retirer le badge rouge du contact sélectionné
     setContacts(prev => prev.map(c => c.id === contact.id ? {...c, hasUnread: false} : c));
     setActiveChatUser(contact);
+  };
+
+  const formaterDateDerniereActivite = (dateStr) => {
+    if (dateStr === '2000-01-01T00:00:00.000Z') return '';
+    const dateObj = new Date(dateStr);
+    const aujourdhui = new Date();
+    
+    if (dateObj.toDateString() === aujourdhui.toDateString()) {
+      return dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    }
+    return dateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
   };
 
   if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#3498DB" /></View>;
@@ -247,9 +281,11 @@ export default function MessagerieScreen() {
                 <Text style={[styles.contactName, item.hasUnread && {color: '#E74C3C', fontWeight: '900'}]}>
                   {item.prenom} {item.nom}
                 </Text>
-                {item.hasUnread ? <Text style={{color: '#E74C3C', fontSize: 13, fontWeight: 'bold'}}>Nouveau message !</Text> : <Text style={styles.contactPhone}>{item.telephone || 'Pas de téléphone'}</Text>}
+                <Text style={item.hasUnread ? {color: '#E74C3C', fontSize: 13, fontWeight: 'bold'} : styles.contactPhone}>
+                  {item.hasUnread ? 'Nouveau message !' : (item.telephone || 'Pas de téléphone')}
+                </Text>
               </View>
-              <Text style={{fontSize: 20}}>💬</Text>
+              <Text style={styles.timeText}>{formaterDateDerniereActivite(item.lastActivity)}</Text>
             </TouchableOpacity>
           )}
         />
@@ -259,7 +295,7 @@ export default function MessagerieScreen() {
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
                <Text style={styles.modalTitle}>Diffuser à tous</Text>
-               <TextInput style={styles.input} value={broadcastText} onChangeText={setBroadcastText} placeholder="Votre message..." multiline />
+               <TextInput style={styles.inputModal} value={broadcastText} onChangeText={setBroadcastText} placeholder="Votre message..." multiline />
                <View style={styles.modalButtons}>
                  <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={() => setIsBroadcastModalVisible(false)}><Text style={styles.buttonTextWhite}>Annuler</Text></TouchableOpacity>
                  <TouchableOpacity style={[styles.button, styles.confirmButton]} onPress={envoyerMessageGlobal} disabled={loadingBroadcast}>{loadingBroadcast ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonTextWhite}>Envoyer à tous</Text>}</TouchableOpacity>
@@ -275,7 +311,16 @@ export default function MessagerieScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.chatHeader}>
         {role === 'admin' && (
-          <TouchableOpacity onPress={() => setActiveChatUser(null)} style={{paddingRight: 15}}><Text style={{fontSize: 20, color: '#FFF'}}>⬅️</Text></TouchableOpacity>
+          <TouchableOpacity 
+            onPress={() => {
+              setActiveChatUser(null);
+              // Recharge la liste pour mettre à jour l'ordre chronologique après avoir fermé le chat
+              initialiserMessagerie();
+            }} 
+            style={{paddingRight: 15}}
+          >
+            <Text style={{fontSize: 20, color: '#FFF'}}>⬅️</Text>
+          </TouchableOpacity>
         )}
         <View>
           <Text style={styles.chatTitle}>{role === 'admin' ? `${activeChatUser?.prenom} ${activeChatUser?.nom}` : 'La Direction'}</Text>
@@ -306,7 +351,7 @@ export default function MessagerieScreen() {
         />
 
         <View style={styles.inputContainer}>
-          <TextInput style={styles.input} placeholder="Écrivez votre message..." value={newMessage} onChangeText={setNewMessage} multiline />
+          <TextInput style={styles.inputChat} placeholder="Écrivez votre message..." value={newMessage} onChangeText={setNewMessage} multiline />
           <TouchableOpacity style={styles.sendBtn} onPress={envoyerMessage}><Text style={styles.sendBtnText}>Envoyer</Text></TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -322,12 +367,15 @@ const styles = StyleSheet.create({
   headerSubtitle: { color: '#BDC3C7', fontSize: 14, marginTop: 5 },
   broadcastBtn: { backgroundColor: '#E74C3C', padding: 12, borderRadius: 10, marginTop: 15, alignItems: 'center' },
   broadcastBtnText: { color: '#FFF', fontWeight: 'bold' },
+  
   contactCard: { flexDirection: 'row', backgroundColor: '#FFF', padding: 15, borderRadius: 12, marginBottom: 10, alignItems: 'center', elevation: 2 },
   contactCardUnread: { borderColor: '#E74C3C', borderWidth: 2, backgroundColor: '#FDEDEC' },
   avatarContact: { width: 45, height: 45, borderRadius: 22.5, backgroundColor: '#EAEDED', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
   contactName: { fontSize: 16, fontWeight: 'bold', color: '#2C3E50' },
   contactPhone: { fontSize: 13, color: '#7F8C8D', marginTop: 2 },
   redDot: { position: 'absolute', top: -2, right: -2, backgroundColor: '#E74C3C', width: 14, height: 14, borderRadius: 7 },
+  timeText: { fontSize: 12, color: '#95A5A6', fontWeight: '600' },
+  
   chatHeader: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#3498DB', padding: 15, paddingTop: 20 },
   chatTitle: { fontSize: 18, fontWeight: 'bold', color: '#FFF' },
   chatSubtitle: { fontSize: 12, color: '#EAF2F8' },
@@ -342,13 +390,16 @@ const styles = StyleSheet.create({
   bubbleTextMe: { color: '#FFF' },
   bubbleTextOther: { color: '#2C3E50' },
   bubbleDate: { fontSize: 10, marginTop: 5, alignSelf: 'flex-end', color: '#95A5A6' },
+  
   inputContainer: { flexDirection: 'row', padding: 10, backgroundColor: '#FFF', alignItems: 'flex-end' },
-  input: { flex: 1, backgroundColor: '#F9FAFC', borderRadius: 20, paddingHorizontal: 15, paddingVertical: 10, fontSize: 15, borderWidth: 1, borderColor: '#EAEDED' },
+  inputChat: { flex: 1, backgroundColor: '#F9FAFC', borderRadius: 20, paddingHorizontal: 15, paddingVertical: 10, fontSize: 15, borderWidth: 1, borderColor: '#EAEDED', minHeight: 40, maxHeight: 100 },
   sendBtn: { backgroundColor: '#3498DB', borderRadius: 20, paddingVertical: 12, paddingHorizontal: 15, marginLeft: 10, justifyContent: 'center' },
   sendBtnText: { color: '#FFF', fontWeight: 'bold' },
+  
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: '#FFF', padding: 20, borderRadius: 20 },
   modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15 },
+  inputModal: { backgroundColor: '#F9FAFC', borderRadius: 10, padding: 15, fontSize: 15, borderWidth: 1, borderColor: '#EAEDED', minHeight: 100, textAlignVertical: 'top' },
   modalButtons: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 15 },
   button: { flex: 1, padding: 12, borderRadius: 10, alignItems: 'center' },
   cancelButton: { backgroundColor: '#95A5A6', marginRight: 10 },

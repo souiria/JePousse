@@ -16,18 +16,21 @@ import GestionFamillesScreen from '../screens/admin/GestionFamillesScreen';
 import GestionTransportAdminScreen from '../screens/admin/GestionTransportAdmin';
 import GestionUtilisateursScreen from '../screens/admin/GestionUtilisateursScreen';
 import HistoriquePointageScreen from '../screens/admin/HistoriquePointageScreen';
-import MenuProgrammeAdminScreen from '../screens/admin/MenuProgrammeAdminScreen'; // 🚀 AJOUT : Import du nouveau module
+import MenuProgrammeAdminScreen from '../screens/admin/MenuProgrammeAdminScreen';
 import MurAdminScreen from '../screens/admin/MurAdminScreen';
 import PaiementsAdminScreen from '../screens/admin/PaiementsAdminScreen';
 import ReglagesAdminScreen from '../screens/admin/ReglagesAdminScreen';
 import RessourcesAdminScreen from '../screens/admin/RessourcesAdminScreen';
-import TerminalPointageEmployesScreen from '../screens/admin/TerminalPointageEmployes'; // 🚀 FIX : Chemin corrigé ici (admin/)
+import TerminalPointageEmployesScreen from '../screens/admin/TerminalPointageEmployes';
+
 import InscriptionScreen from '../screens/auth/InscriptionScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
+
 import DashboardParent from '../screens/parent/DashboardParent';
-import MenuProgrammeParentScreen from '../screens/parent/MenuProgrammeParentScreen';
+import MenuProgrammeParentScreen from '../screens/parent/MenuProgrammeParentScreen'; // 🚀 Chemin corrigé
 import MesEnfantsScreen from '../screens/parent/MesEnfantsScreen';
 import PaiementsParentScreen from '../screens/parent/PaiementsParentScreen';
+
 import MessagerieScreen from '../screens/shared/MessagerieScreen';
 
 const Stack = createNativeStackNavigator();
@@ -114,8 +117,8 @@ export default function AppNavigator() {
         
         {/* 🥦 MENUS ET PROGRAMMES HEBDOMADAIRES */}
         <Stack.Screen name="MenuProgrammeAdmin" component={MenuProgrammeAdminScreen} options={{ title: 'Menu & Programme Hebdo' }} />
-        {/* 🥦 MENUS ET PROGRAMMES HEBDOMADAIRES */}
-        <Stack.Screen name="MenuProgrammeParent" component={MenuProgrammeParentScreen} options={{ title: 'Menu & Programme' }} />
+        <Stack.Screen name="MenuProgrammeParent" component={MenuProgrammeParentScreen} options={{ title: 'Menu & Programme' }} /> 
+        
         {/* 🕙 TERMINAL POINTAGE PERSONNEL */}
         <Stack.Screen name="TerminalPointageEmployes" component={TerminalPointageEmployesScreen} options={{ title: 'Pointage Personnel' }} />
 
