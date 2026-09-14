@@ -1,26 +1,19 @@
+import { Picker } from '@react-native-picker/picker';
 import { useFocusEffect } from '@react-navigation/native';
-import Constants from 'expo-constants'; // 🚀 REQUIRED FOR DYNAMIC CONFIG
+import Constants from 'expo-constants';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../services/supabaseClient';
 
-// 🚀 Mapping des logos dynamiques
 const logoAssets = {
   jeupousse: require('../../../assets/images/jeupousse/icon.png'),
   demo: require('../../../assets/images/demo/icon.png'),
 };
 
-// 🎨 CONFIGURATION DES THÈMES DYNAMIQUES SELON LA CRÈCHE
 const themes = {
-  jeupousse: {
-    primary: '#E91E63',     // Magenta
-    background: '#F8FAFC',  // Light Grey
-  },
-  demo: {
-    primary: '#2196F3',     // Blue
-    background: '#E3F2FD',  // Light Blue
-  }
+  jeupousse: { primary: '#E91E63', background: '#F8FAFC' },
+  demo: { primary: '#2196F3', background: '#E3F2FD' }
 };
 
 export default function DashboardAdmin({ navigation }) {
@@ -30,20 +23,17 @@ export default function DashboardAdmin({ navigation }) {
   const [anneeActive, setAnneeActive] = useState('Chargement...');
   const [nomCreche, setNomCreche] = useState(Constants.expoConfig?.name || 'Ma Crèche');
 
-  // 🚀 ÉTATS POUR LES ANNIVERSAIRES
   const [birthdayCount, setBirthdayCount] = useState(0);
   const [birthdayKids, setBirthdayKids] = useState([]);
   const [modalBirthdayVisible, setModalBirthdayVisible] = useState(false);
   const [sendingId, setSendingId] = useState(null);
 
-  // 🚀 ÉTATS : ABSENCES ET RECHERCHE AVANCÉE
   const [absencesCount, setAbsencesCount] = useState(0);
   const [listeAbsences, setListeAbsences] = useState([]);
   const [modalAbsencesVisible, setModalAbsencesVisible] = useState(false);
   const [searchAbsence, setSearchAbsence] = useState('');
   const [filterClasseAbsence, setFilterClasseAbsence] = useState('Toutes');
 
-  // 🚀 ÉTATS : CODES SOS, FILTRES ET HISTORIQUE TRAÇABILITÉ
   const [modalSOSVisible, setModalSOSVisible] = useState(false);
   const [inputCodeSOS, setInputCodeSOS] = useState('');
   const [sosResult, setSosResult] = useState(null);
@@ -53,14 +43,21 @@ export default function DashboardAdmin({ navigation }) {
   const [searchSOS, setSearchSOS] = useState('');
   const [filterClasseSOS, setFilterClasseSOS] = useState('Toutes');
 
-  // 🚀 Configuration Dynamique du thème et logo
+  // 🚀 ÉTATS POUR LES FOURNITURES
+  const [modalFournituresVisible, setModalFournituresVisible] = useState(false);
+  const [enfantsList, setEnfantsList] = useState([]);
+  const [selectedEnfantFourniture, setSelectedEnfantFourniture] = useState('');
+  const [filterClasseFourniture, setFilterClasseFourniture] = useState('Toutes'); // Nouveau filtre
+  const [typeFourniture, setTypeFourniture] = useState('couches');
+  const [commentaireFourniture, setCommentaireFourniture] = useState('');
+  const [loadingFourniture, setLoadingFourniture] = useState(false);
+
   const crecheId = Constants.expoConfig?.extra?.crecheId || 'jeupousse';
   const selectedLogo = logoAssets[crecheId] || logoAssets.jeupousse;
   const currentTheme = themes[crecheId] || themes.jeupousse;
 
   const classesList = ['Toutes', 'Crèche', 'TPS', 'PS', 'MS', 'GS'];
 
-  // 🚀 CENTRALISATION DU RAFRAÎCHISSEMENT GLOBAL
   const rafraichirDonnees = () => {
     calculerMessagesNonLus();
     calculerAttestationsEnAttente();
@@ -68,6 +65,7 @@ export default function DashboardAdmin({ navigation }) {
     calculerAnniversairesProchains();
     calculerAbsencesDuMois();
     chargerHistoriqueSOS();
+    chargerEnfants(); 
     fetchParametres();
   };
 
@@ -80,24 +78,12 @@ export default function DashboardAdmin({ navigation }) {
   useEffect(() => {
     const channelId = 'admin_global_channel_' + Date.now();
     const realtimeChannel = supabase.channel(channelId)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
-        calculerMessagesNonLus();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'demandes_attestation' }, () => {
-        calculerAttestationsEnAttente();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'paiements' }, () => {
-        calculerPaiementsAVerifier();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'enfants' }, () => {
-        calculerAnniversairesProchains();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_presences' }, () => {
-        calculerAbsencesDuMois();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'recuperations_sos' }, () => {
-        chargerHistoriqueSOS();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => calculerMessagesNonLus())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'demandes_attestation' }, () => calculerAttestationsEnAttente())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'paiements' }, () => calculerPaiementsAVerifier())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'enfants' }, () => calculerAnniversairesProchains())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_presences' }, () => calculerAbsencesDuMois())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'recuperations_sos' }, () => chargerHistoriqueSOS())
       .subscribe((status) => {
         console.log("🔌 Statut connexion Realtime Admin :", status);
       });
@@ -122,6 +108,75 @@ export default function DashboardAdmin({ navigation }) {
         });
       }
     } catch (e) { setAnneeActive('2025-2026'); }
+  };
+
+  const chargerEnfants = async () => {
+    try {
+      const { data } = await supabase.from('enfants').select('id, prenom, nom, parent_id, classe').order('prenom');
+      if (data) {
+        setEnfantsList(data);
+      }
+    } catch (error) { console.log(error); }
+  };
+
+  // 🚀 GESTION DYNAMIQUE DE LA LISTE D'ENFANTS FILTRÉE (Fournitures)
+  const enfantsFiltresFourniture = enfantsList.filter(e => filterClasseFourniture === 'Toutes' || (e.classe || 'Crèche') === filterClasseFourniture);
+
+  // 🚀 MISE À JOUR AUTO DU SÉLECTEUR QUAND LE FILTRE CHANGE
+  useEffect(() => {
+    if (enfantsFiltresFourniture.length > 0) {
+      const isCurrentValid = enfantsFiltresFourniture.some(e => e.id === selectedEnfantFourniture);
+      if (!isCurrentValid) {
+        setSelectedEnfantFourniture(enfantsFiltresFourniture[0].id);
+      }
+    } else {
+      setSelectedEnfantFourniture('');
+    }
+  }, [filterClasseFourniture, enfantsList]);
+
+  const envoyerDemandeFourniture = async () => {
+    if (!selectedEnfantFourniture) return Alert.alert("Erreur", "Veuillez sélectionner un enfant.");
+    setLoadingFourniture(true);
+    try {
+      const enfant = enfantsList.find(e => e.id === selectedEnfantFourniture);
+      
+      const { error } = await supabase.from('demandes_fournitures').insert([{
+        enfant_id: enfant.id,
+        parent_id: enfant.parent_id,
+        type_fourniture: typeFourniture,
+        commentaire: commentaireFourniture,
+        statut: 'en_attente'
+      }]);
+      
+      if (error) throw error;
+      
+      if (enfant.parent_id) {
+        const { data: parentData } = await supabase.from('utilisateurs').select('expo_push_token').eq('id', enfant.parent_id).single();
+        if (parentData?.expo_push_token) {
+          await fetch('https://exp.host/--/api/v2/push/send', {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: parentData.expo_push_token,
+              sound: 'default',
+              priority: 'high',
+              title: '⚠️ Fournitures requises',
+              body: `La crèche a besoin de : ${typeFourniture} pour ${enfant.prenom}.`,
+              data: { tab: 'mur' }
+            }),
+          });
+        }
+      }
+      
+      Alert.alert("Demande envoyée ✅", "Le parent a été notifié avec succès.");
+      setModalFournituresVisible(false);
+      setCommentaireFourniture('');
+    } catch (e) {
+      Alert.alert("Erreur", "Impossible d'envoyer la demande.");
+      console.log(e);
+    } finally {
+      setLoadingFourniture(false);
+    }
   };
 
   const calculerAbsencesDuMois = async () => {
@@ -334,6 +389,14 @@ export default function DashboardAdmin({ navigation }) {
           </TouchableOpacity>
 
           <TouchableOpacity style={[styles.card, { borderBottomColor: '#8BC34A' }]} onPress={() => navigation.navigate('CahierAdmin')}><View style={[styles.iconCircle, { backgroundColor: '#F1F8E9' }]}><Text style={styles.cardIcon}>📝</Text></View><Text style={styles.cardTitle}>Cahier Quotidien</Text><Text style={styles.cardDesc}>Repas, siestes, suivi</Text></TouchableOpacity>
+
+          {/* 🚀 TUILE : DEMANDE DE FOURNITURES */}
+          <TouchableOpacity style={[styles.card, { borderBottomColor: '#E040FB' }]} onPress={() => setModalFournituresVisible(true)}>
+            <View style={[styles.iconCircle, { backgroundColor: '#F3E5F5' }]}><Text style={styles.cardIcon}>📦</Text></View>
+            <Text style={styles.cardTitle}>Fournitures</Text>
+            <Text style={styles.cardDesc}>Demander aux parents</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity style={[styles.card, { borderBottomColor: '#FF9800' }]} onPress={() => navigation.navigate('GestionFamillesScreen')}><View style={[styles.iconCircle, { backgroundColor: '#FFF3E0' }]}><Text style={styles.cardIcon}>👥</Text></View><Text style={styles.cardTitle}>Familles</Text><Text style={styles.cardDesc}>Parents & Enfants</Text></TouchableOpacity>
           
           <TouchableOpacity style={[styles.card, { borderBottomColor: '#FFC107' }]} onPress={() => navigation.navigate('PaiementsAdmin')}>
@@ -360,7 +423,6 @@ export default function DashboardAdmin({ navigation }) {
             <Text style={styles.cardDesc}>Repas & Allergies</Text>
           </TouchableOpacity>
 
-          {/* 🚀 NOUVEAU : TILES MENU DE LA SEMAINE & PROGRAMME PEDAGOGIQUE */}
           <TouchableOpacity style={[styles.card, { borderBottomColor: '#009688' }]} onPress={() => navigation.navigate('MenuProgrammeAdmin')}>
             <View style={[styles.iconCircle, { backgroundColor: '#E0F2F1' }]}><Text style={styles.cardIcon}>🗓️</Text></View>
             <Text style={styles.cardTitle}>Menu & Programme</Text>
@@ -394,6 +456,76 @@ export default function DashboardAdmin({ navigation }) {
         <View style={styles.footer}><Text style={styles.footerText}>Developped by A S © 2026</Text></View>
       </ScrollView>
 
+      {/* 🚀 MODAL FOURNITURES AVEC FILTRE PAR CLASSE */}
+      <Modal visible={modalFournituresVisible} animationType="slide" transparent={true}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+              <Text style={styles.modalEmojiHeader}>📦</Text>
+              <Text style={styles.modalTitle}>Demande de Fournitures</Text>
+              <Text style={styles.modalSubtitle}>Alerter un parent qu'il manque un élément</Text>
+              
+              <ScrollView showsVerticalScrollIndicator={false}>
+                
+                {/* 🚀 AJOUT DU FILTRE PAR CLASSE ICI */}
+                <Text style={styles.labelInput}>Filtrer par classe :</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.pillsScroll, {marginBottom: 15}]}>
+                  {classesList.map(c => (
+                    <TouchableOpacity 
+                      key={c} 
+                      style={[styles.filterPill, filterClasseFourniture === c && [styles.filterPillActive, { backgroundColor: '#E040FB', borderColor: '#E040FB' }]]} 
+                      onPress={() => setFilterClasseFourniture(c)}
+                    >
+                      <Text style={[styles.filterPillText, filterClasseFourniture === c && styles.filterPillTextActive]}>{c}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                <Text style={styles.labelInput}>Sélectionner un enfant :</Text>
+                <View style={styles.pickerContainerForm}>
+                  <Picker selectedValue={selectedEnfantFourniture} onValueChange={setSelectedEnfantFourniture}>
+                    {enfantsFiltresFourniture.length === 0 ? (
+                      <Picker.Item label="Aucun enfant trouvé..." value="" color="#94A3B8" />
+                    ) : (
+                      enfantsFiltresFourniture.map(e => <Picker.Item key={e.id} label={`${e.prenom} ${e.nom}`} value={e.id} />)
+                    )}
+                  </Picker>
+                </View>
+
+                <Text style={styles.labelInput}>Élément manquant :</Text>
+                <View style={styles.pickerContainerForm}>
+                  <Picker selectedValue={typeFourniture} onValueChange={setTypeFourniture}>
+                    <Picker.Item label="🧷 Couches" value="couches" />
+                    <Picker.Item label="🧻 Lingettes" value="lingettes" />
+                    <Picker.Item label="🍼 Lait / Biberon" value="lait" />
+                    <Picker.Item label="👕 Vêtements de rechange" value="vetements" />
+                    <Picker.Item label="📦 Autre (Préciser ci-dessous)" value="autre" />
+                  </Picker>
+                </View>
+
+                <Text style={styles.labelInput}>Commentaire facultatif :</Text>
+                <TextInput 
+                  style={[styles.textInputArea, {minHeight: 80}]} 
+                  placeholder="Ex: Pensez à apporter des couches taille 4..." 
+                  value={commentaireFourniture} 
+                  onChangeText={setCommentaireFourniture} 
+                  multiline 
+                />
+              </ScrollView>
+
+              <View style={styles.modalButtonsRow}>
+                <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#F1F5F9'}]} onPress={() => setModalFournituresVisible(false)}>
+                  <Text style={[styles.actionBtnText, {color: '#64748B'}]}>Annuler</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#E040FB'}]} onPress={envoyerDemandeFourniture} disabled={loadingFourniture}>
+                  {loadingFourniture ? <ActivityIndicator color="#FFF" /> : <Text style={styles.actionBtnText}>Envoyer l'alerte</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       {/* MODAL 1 : ANNIVERSAIRES */}
       <Modal visible={modalBirthdayVisible} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
@@ -424,7 +556,7 @@ export default function DashboardAdmin({ navigation }) {
         </View>
       </Modal>
 
-      {/* 🚀 MODAL 2 : CONTRÔLEUR SOS */}
+      {/* MODAL 2 : CONTRÔLEUR SOS */}
       <Modal visible={modalSOSVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
@@ -499,7 +631,7 @@ export default function DashboardAdmin({ navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* 🚀 MODAL 3 : ABSENCES */}
+      {/* MODAL 3 : ABSENCES */}
       <Modal visible={modalAbsencesVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
@@ -563,7 +695,6 @@ const styles = StyleSheet.create({
   logoutBtn: { backgroundColor: '#FFF3E0', padding: 10, borderRadius: 12 },
   logoutIcon: { fontSize: 18 },
   
-  // -- STYLES DES BOUTONS DE L'EN-TÊTE ACCOLÉS --
   headerButtonsRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   refreshBtn: { backgroundColor: '#E0F2FE', padding: 10, borderRadius: 12 },
   refreshIcon: { fontSize: 18 },
@@ -640,6 +771,13 @@ const styles = StyleSheet.create({
   absenceReasonText: { fontSize: 12, color: '#475569', fontStyle: 'italic', marginTop: 2, fontWeight: '500' },
   statusAbsencePill: { backgroundColor: '#EDE7F6', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8 },
   statusAbsencePillText: { color: '#673AB7', fontSize: 11, fontWeight: '700' },
+
+  labelInput: { fontSize: 14, fontWeight: '700', color: '#334155', marginBottom: 8, marginTop: 15 },
+  pickerContainerForm: { backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  textInputArea: { backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', padding: 12, textAlignVertical: 'top', color: '#0F172A' },
+  modalButtonsRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginTop: 25 },
+  actionBtn: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  actionBtnText: { fontWeight: 'bold', fontSize: 15, color: '#FFF' },
 
   footer: { alignItems: 'center', paddingVertical: 20 },
   footerText: { color: '#94A3B8', fontSize: 12, fontWeight: '600' }
