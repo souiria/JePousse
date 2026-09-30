@@ -38,6 +38,9 @@ export default function GestionFamillesScreen() {
   const [filterSexe, setFilterSexe] = useState('Tous'); 
   const [filterAllergie, setFilterAllergie] = useState('Tous'); 
   const [filterClasse, setFilterClasse] = useState('Toutes'); 
+  // 🚀 NOUVEAUX FILTRES
+  const [filterGarde, setFilterGarde] = useState('Tous');
+  const [filterTransport, setFilterTransport] = useState('Tous');
 
   const [codeParent, setCodeParent] = useState(''); 
   const [familleTrouvee, setFamilleTrouvee] = useState(false); 
@@ -66,6 +69,9 @@ export default function GestionFamillesScreen() {
   const [signesAgressivite, setSignesAgressivite] = useState([]);
   const [faitSieste, setFaitSieste] = useState(true);
 
+  // 🚀 NOUVEL ÉTAT POUR LES TYPES DE GARDE
+  const [typesGarde, setTypesGarde] = useState([]);
+
   const [tarifInscription, setTarifInscription] = useState('');
   const [tarifMensuel, setTarifMensuel] = useState('');
   const [tarifGarde, setTarifGarde] = useState(''); 
@@ -73,6 +79,8 @@ export default function GestionFamillesScreen() {
   const [tarifTransport, setTarifTransport] = useState('');
 
   const listeSignes = ["Tape", "Mord", "Griffe", "Pousse", "Crache", "Autre"];
+  // 🚀 LISTE DES TYPES DE GARDE
+  const listeTypesGarde = ["12h à 14h", "Tardive après 17h", "Mercredis après-midi"];
 
   const crecheId = Constants.expoConfig?.extra?.crecheId || 'jeupousse';
   const currentTheme = themes[crecheId] || themes.jeupousse;
@@ -253,66 +261,6 @@ export default function GestionFamillesScreen() {
     }
   };
 
-  const genererFacturesManuellementEnfant = async () => {
-    if (!editingEnfantId) return;
-
-    const executer = async () => {
-      setLoading(true);
-      try {
-        const { data: currentKid } = await supabase.from('enfants').select('parent_id').eq('id', editingEnfantId).single();
-        const idDuParent = currentKid?.parent_id;
-
-        const paiementsAGenerer = [];
-        const addPaymentRow = (titre, montant, type, mois = null) => {
-          if (montant > 0) {
-            const row = { enfant_id: editingEnfantId, titre, montant, type, statut: "en_attente" };
-            if (idDuParent) row.parent_id = idDuParent;
-            if (mois) row.mois = mois;
-            paiementsAGenerer.push(row);
-          }
-        };
-
-        addPaymentRow(`Frais d'inscription (${anneeInscription})`, parseTarif(tarifInscription), "inscription");
-
-        const moisScolaires = ['Septembre', 'Octobre', 'Novembre', 'Décembre', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet'];
-        moisScolaires.forEach(mois => {
-          addPaymentRow(`Scolarité - ${mois} (${anneeInscription})`, parseTarif(tarifMensuel), 'scolarite', mois);
-          addPaymentRow(`Garde - ${mois} (${anneeInscription})`, parseTarif(tarifGarde), 'garde', mois);
-          addPaymentRow(`Cantine - ${mois} (${anneeInscription})`, parseTarif(tarifCantine), 'cantine', mois);
-          addPaymentRow(`Transport - ${mois} (${anneeInscription})`, parseTarif(tarifTransport), 'transport', mois);
-        });
-
-        if (paiementsAGenerer.length > 0) {
-          const { error } = await supabase.from('paiements').insert(paiementsAGenerer);
-          if (error) throw error;
-          
-          if (Platform.OS === 'web') window.alert("Les factures ont été générées !");
-          else Alert.alert("Succès", "Les factures ont été générées !");
-          
-          setModalVisible(false);
-        } else {
-          if (Platform.OS === 'web') window.alert("Aucun tarif supérieur à 0 n'a été saisi.");
-          else Alert.alert("Info", "Aucun tarif supérieur à 0 n'a été saisi.");
-        }
-      } catch (error) {
-        if (Platform.OS === 'web') window.alert("Erreur: " + error.message);
-        else Alert.alert("Erreur", error.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (Platform.OS === 'web') {
-      if (window.confirm("Générer la facture d'inscription et les 11 mensualités pour cet enfant en fonction des tarifs saisis ?")) executer();
-    } else {
-      Alert.alert(
-        "Générer les factures ?",
-        "Cela va créer la facture d'inscription et les 11 mensualités.\n⚠️ Ne cliquez pas si elles ont déjà été générées pour éviter les doublons.",
-        [ { text: "Annuler", style: "cancel" }, { text: "Générer", onPress: executer } ]
-      );
-    }
-  };
-
   const choisirPhoto = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({ 
       mediaTypes: ImagePicker.MediaTypeOptions.Images, 
@@ -334,6 +282,11 @@ export default function GestionFamillesScreen() {
 
   const toggleSigne = (signe) => {
     setSignesAgressivite(prev => prev.includes(signe) ? prev.filter(s => s !== signe) : [...prev, signe]);
+  };
+
+  // 🚀 TOGGLE POUR LES TYPES DE GARDE
+  const toggleTypeGarde = (type) => {
+    setTypesGarde(prev => prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]);
   };
 
   const onChangeDate = (event, selectedDate) => {
@@ -360,7 +313,7 @@ export default function GestionFamillesScreen() {
     setMereNom(''); setMerePrenom(''); setMereProf(''); setMereTel1(''); setMereTel2('');
     setPereNom(''); setPerePrenom(''); setPereProf(''); setPereTel1(''); setPereTel2(''); setSituationMatrimoniale('Marie');
     setAuth1(''); setAuth2(''); setAuth3('');
-    setAAllergie(false); setDetailsAllergie(''); setSignesAgressivite([]); setFaitSieste(true);
+    setAAllergie(false); setDetailsAllergie(''); setSignesAgressivite([]); setFaitSieste(true); setTypesGarde([]);
     setTarifInscription(''); setTarifMensuel(''); setTarifGarde(''); setTarifCantine(''); setTarifTransport('');
     setModalVisible(true);
   };
@@ -373,7 +326,7 @@ export default function GestionFamillesScreen() {
     setAnneeInscription(anneeActive); 
     
     setPrenomEnfant(''); setNomEnfant(''); setDateNaissance(''); setDateObj(new Date()); setLieuNaissance(''); setAdresse(''); setSexe('Masculin'); setClasseEnfant('Crèche'); setPhotoUri(null);
-    setAAllergie(false); setDetailsAllergie(''); setSignesAgressivite([]); setFaitSieste(true);
+    setAAllergie(false); setDetailsAllergie(''); setSignesAgressivite([]); setFaitSieste(true); setTypesGarde([]);
     setTarifInscription(''); setTarifMensuel(''); setTarifGarde(''); setTarifCantine(''); setTarifTransport('');
     setModalVisible(true);
   };
@@ -408,6 +361,10 @@ export default function GestionFamillesScreen() {
     setAAllergie(enfant.a_allergie || false); setDetailsAllergie(enfant.details_allergie || '');
     setSignesAgressivite(enfant.signes_agressivite ? enfant.signes_agressivite.split(', ') : []);
     setFaitSieste(enfant.fait_sieste !== false);
+    
+    // 🚀 LECTURE DES TYPES DE GARDE
+    setTypesGarde(enfant.types_garde ? enfant.types_garde.split(', ') : []);
+
     setTarifInscription(enfant.tarif_inscription?.toString() || '0'); 
     setTarifMensuel(enfant.tarif_mensuel?.toString() || '0');
     setTarifGarde(enfant.tarif_garde?.toString() || '0'); 
@@ -527,6 +484,7 @@ export default function GestionFamillesScreen() {
         details_allergie: aAllergie ? detailsAllergie : null,
         signes_agressivite: signesAgressivite.length > 0 ? signesAgressivite.join(', ') : null,
         fait_sieste: faitSieste,
+        types_garde: typesGarde.length > 0 ? typesGarde.join(', ') : null,
         tarif_inscription: parseTarif(tarifInscription),
         tarif_mensuel: parseTarif(tarifMensuel),
         tarif_garde: parseTarif(tarifGarde), 
@@ -535,9 +493,54 @@ export default function GestionFamillesScreen() {
       };
 
       if (isEditing) {
+        // 🚀 LOGIQUE INTELLIGENTE DE MISE À JOUR DE LA GARDE
         await supabase.from('enfants').update(enfantData).eq('id', editingEnfantId);
-        if (Platform.OS === 'web') window.alert("Profil et famille mis à jour !");
-        else Alert.alert("Succès", "Profil et famille mis à jour !");
+        
+        // 1. On supprime TOUTES les factures "Garde" en attente de cet enfant
+        await supabase.from('paiements')
+          .delete()
+          .eq('enfant_id', editingEnfantId)
+          .eq('type', 'garde')
+          .eq('statut', 'en_attente');
+
+        // 2. On regarde quels mois la famille a DÉJÀ PAYÉ pour la garde
+        const { data: facturesPayees } = await supabase.from('paiements')
+          .select('mois')
+          .eq('enfant_id', editingEnfantId)
+          .eq('type', 'garde')
+          .eq('statut', 'paye');
+          
+        const moisDejaPayes = facturesPayees ? facturesPayees.map(f => f.mois) : [];
+
+        // 3. On génère les nouvelles factures de Garde UNIQUEMENT pour les mois non payés
+        const tarifGardeNouveau = parseTarif(tarifGarde);
+        if (tarifGardeNouveau > 0) {
+          const paiementsGardeAGenerer = [];
+          const moisScolaires = ['Septembre', 'Octobre', 'Novembre', 'Décembre', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet'];
+          
+          moisScolaires.forEach(mois => {
+            // 🛑 SÉCURITÉ : Ne pas recréer de facture si ce mois a déjà été payé
+            if (!moisDejaPayes.includes(mois)) {
+              const row = { 
+                enfant_id: editingEnfantId, 
+                titre: `Garde - ${mois} (${anneeInscription})`, 
+                montant: tarifGardeNouveau, 
+                type: 'garde', 
+                statut: "en_attente",
+                mois: mois
+              };
+              if (idDuParent) row.parent_id = idDuParent;
+              paiementsGardeAGenerer.push(row);
+            }
+          });
+
+          if (paiementsGardeAGenerer.length > 0) {
+             await supabase.from('paiements').insert(paiementsGardeAGenerer);
+          }
+        }
+
+        if (Platform.OS === 'web') window.alert("Profil, famille et factures de garde mis à jour !");
+        else Alert.alert("Succès", "Profil, famille et factures de garde mis à jour !");
       } else {
         const { data: newKid, error: kidErr } = await supabase.from('enfants').insert([enfantData]).select();
         if (kidErr) throw kidErr;
@@ -736,7 +739,10 @@ export default function GestionFamillesScreen() {
     let matchAllergie = filterAllergie === 'Tous' ? true : (filterAllergie === 'Oui' ? e.a_allergie : !e.a_allergie);
     let matchSexe = filterSexe === 'Tous' ? true : e.sexe === filterSexe;
     
-    if (matchAnnee && matchAllergie && matchSexe) {
+    let matchGarde = filterGarde === 'Tous' ? true : (filterGarde === 'Oui' ? (e.tarif_garde > 0 || (e.types_garde && e.types_garde.length > 0)) : (!e.tarif_garde && !e.types_garde));
+    let matchTransport = filterTransport === 'Tous' ? true : (filterTransport === 'Oui' ? e.tarif_transport > 0 : !e.tarif_transport);
+
+    if (matchAnnee && matchAllergie && matchSexe && matchGarde && matchTransport) {
       classCounts.Toutes++;
       const c = e.classe || 'Crèche';
       if (classCounts[c] !== undefined) {
@@ -752,7 +758,10 @@ export default function GestionFamillesScreen() {
       let matchSexe = filterSexe === 'Tous' ? true : e.sexe === filterSexe;
       let matchClasse = filterClasse === 'Toutes' ? true : e.classe === filterClasse;
       
-      return matchAnnee && matchAllergie && matchSexe && matchClasse;
+      let matchGarde = filterGarde === 'Tous' ? true : (filterGarde === 'Oui' ? (e.tarif_garde > 0 || (e.types_garde && e.types_garde.length > 0)) : (!e.tarif_garde && !e.types_garde));
+      let matchTransport = filterTransport === 'Tous' ? true : (filterTransport === 'Oui' ? e.tarif_transport > 0 : !e.tarif_transport);
+
+      return matchAnnee && matchAllergie && matchSexe && matchClasse && matchGarde && matchTransport;
     });
     return { ...famille, enfants_a_afficher: enfantsFiltres };
   }).filter(f => {
@@ -789,7 +798,6 @@ export default function GestionFamillesScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: currentTheme.background }]} edges={['top', 'left', 'right', 'bottom']}>
       
       <View style={styles.topSection}>
-        {/* 🚀 BARRE DE RECHERCHE DÉPLACÉE TOUT EN HAUT */}
         <View style={[styles.searchRow, { marginBottom: 12 }]}>
           <View style={styles.searchContainer}>
             <Text style={styles.searchIcon}>🔍</Text>
@@ -834,8 +842,9 @@ export default function GestionFamillesScreen() {
       </View>
 
       {showFilters && (
-        <View style={styles.filtersPanel}>
+        <ScrollView style={styles.filtersPanel} showsVerticalScrollIndicator={false}>
           <Text style={styles.filterTitle}>Paramètres supplémentaires</Text>
+          
           <View style={styles.filterGroup}>
             <Text style={styles.filterLabel}>Sexe :</Text>
             <View style={styles.pillsRow}>
@@ -870,7 +879,30 @@ export default function GestionFamillesScreen() {
               ))}
             </View>
           </View>
-        </View>
+
+          <View style={styles.filterGroup}>
+            <Text style={styles.filterLabel}>Inscrit à la Garde :</Text>
+            <View style={styles.pillsRow}>
+              {['Tous', 'Oui', 'Non'].map(opt => (
+                <TouchableOpacity key={opt} style={[styles.filterPill, filterGarde === opt && [styles.filterPillActive, { backgroundColor: currentTheme.primary, borderColor: currentTheme.primary }]]} onPress={() => setFilterGarde(opt)}>
+                  <Text style={[styles.filterPillText, filterGarde === opt && styles.filterPillTextActive]}>{opt}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={[styles.filterGroup, { marginBottom: 20 }]}>
+            <Text style={styles.filterLabel}>Inscrit au Transport :</Text>
+            <View style={styles.pillsRow}>
+              {['Tous', 'Oui', 'Non'].map(opt => (
+                <TouchableOpacity key={opt} style={[styles.filterPill, filterTransport === opt && [styles.filterPillActive, { backgroundColor: currentTheme.primary, borderColor: currentTheme.primary }]]} onPress={() => setFilterTransport(opt)}>
+                  <Text style={[styles.filterPillText, filterTransport === opt && styles.filterPillTextActive]}>{opt}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+        </ScrollView>
       )}
 
       <ScrollView contentContainerStyle={styles.listContainer} showsVerticalScrollIndicator={false}>
@@ -927,6 +959,10 @@ export default function GestionFamillesScreen() {
                           <Text style={styles.enfantYearText}>🎓 {enfant.annee_scolaire || 'Non définie'} • 🏫 {enfant.classe || 'Non classé'}</Text>
                           <Text style={{fontSize: 12, color: '#64748B', marginTop: 2}}>🎂 Né(e) le : {dateAffichage}</Text>
                           {enfant.a_allergie && <Text style={styles.alerteTextList}>⚠️ Allergie : {enfant.details_allergie}</Text>}
+                          
+                          {enfant.types_garde && <Text style={styles.alerteTextListGarde}>🧸 Garde : {enfant.types_garde}</Text>}
+                          {enfant.tarif_transport > 0 && <Text style={styles.alerteTextListTransport}>🚌 Inscrit au transport</Text>}
+
                         </View>
                         <TouchableOpacity style={styles.editIconBtn} onPress={() => editerEnfant(enfant)}><Text>✏️</Text></TouchableOpacity>
                       </View>
@@ -953,7 +989,6 @@ export default function GestionFamillesScreen() {
         <View style={styles.footer}><Text style={styles.footerText}>Developped by A S © 2026</Text></View>
       </ScrollView>
 
-      {/* MODAL INSCRIPTION/ÉDITION */}
       <Modal visible={modalVisible} animationType="slide" transparent={false}>
         <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
           <ScrollView contentContainerStyle={styles.formContainer} showsVerticalScrollIndicator={false}>
@@ -1147,18 +1182,18 @@ export default function GestionFamillesScreen() {
             <View style={styles.priceRow}><Text style={styles.labelPrice}>Inscription (1x)</Text><TextInput style={styles.priceInput} value={tarifInscription} onChangeText={setTarifInscription} keyboardType="numeric" placeholder="0" /></View>
             <View style={styles.priceRow}><Text style={styles.labelPrice}>Scolarité</Text><TextInput style={styles.priceInput} value={tarifMensuel} onChangeText={setTarifMensuel} keyboardType="numeric" placeholder="0" /></View>
             <View style={styles.priceRow}><Text style={styles.labelPrice}>Garde</Text><TextInput style={styles.priceInput} value={tarifGarde} onChangeText={setTarifGarde} keyboardType="numeric" placeholder="0" /></View>
+            
+            <Text style={[styles.label, {marginTop: 10}]}>📋 Préciser le type de Garde :</Text>
+            <View style={styles.checklistContainer}>
+              {listeTypesGarde.map(type => (
+                <TouchableOpacity key={type} style={[styles.checkItem, typesGarde.includes(type) && [styles.checkItemActive, { borderColor: currentTheme.primary }]]} onPress={() => toggleTypeGarde(type)}>
+                  <Text style={typesGarde.includes(type) ? [styles.checkItemTextActive, { color: currentTheme.primary }] : styles.checkItemText}>{typesGarde.includes(type) ? "✅ " : "⬜ "}{type}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <View style={styles.priceRow}><Text style={styles.labelPrice}>Cantine</Text><TextInput style={styles.priceInput} value={tarifCantine} onChangeText={setTarifCantine} keyboardType="numeric" placeholder="0" /></View>
             <View style={styles.priceRow}><Text style={styles.labelPrice}>Transport</Text><TextInput style={styles.priceInput} value={tarifTransport} onChangeText={setTarifTransport} keyboardType="numeric" placeholder="0" /></View>
-
-            {isEditing && (
-              <TouchableOpacity 
-                style={{ backgroundColor: '#EEF2FF', padding: 15, borderRadius: 12, borderWidth: 1, borderColor: '#C7D2FE', marginTop: 15, alignItems: 'center' }} 
-                onPress={genererFacturesManuellementEnfant}
-                disabled={loading}
-              >
-                {loading ? <ActivityIndicator color="#4F46E5" /> : <Text style={{ color: '#4F46E5', fontWeight: 'bold', fontSize: 15 }}>⚙️ Générer les factures de l'année</Text>}
-              </TouchableOpacity>
-            )}
 
             <View style={styles.buttonRow}>
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalVisible(false)}>
@@ -1244,6 +1279,8 @@ const styles = StyleSheet.create({
   enfantText: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
   enfantYearText: { fontSize: 13, color: '#8B5CF6', fontWeight: '700', marginTop: 2 },
   alerteTextList: { fontSize: 12, color: '#EF4444', fontWeight: 'bold', marginTop: 2 },
+  alerteTextListGarde: { fontSize: 12, color: '#8D6E63', fontWeight: 'bold', marginTop: 2 },
+  alerteTextListTransport: { fontSize: 12, color: '#3F51B5', fontWeight: 'bold', marginTop: 2 },
   editIconBtn: { backgroundColor: '#FFFFFF', padding: 10, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
 
   authBox: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#E2E8F0' },

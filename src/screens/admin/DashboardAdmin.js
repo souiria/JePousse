@@ -1,6 +1,8 @@
 import { Picker } from '@react-native-picker/picker';
 import { useFocusEffect } from '@react-navigation/native';
 import Constants from 'expo-constants';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -43,14 +45,19 @@ export default function DashboardAdmin({ navigation }) {
   const [searchSOS, setSearchSOS] = useState('');
   const [filterClasseSOS, setFilterClasseSOS] = useState('Toutes');
 
-  // 🚀 ÉTATS POUR LES FOURNITURES
+  // 🚀 ÉTATS FOURNITURES
   const [modalFournituresVisible, setModalFournituresVisible] = useState(false);
   const [enfantsList, setEnfantsList] = useState([]);
   const [selectedEnfantFourniture, setSelectedEnfantFourniture] = useState('');
-  const [filterClasseFourniture, setFilterClasseFourniture] = useState('Toutes'); // Nouveau filtre
+  const [filterClasseFourniture, setFilterClasseFourniture] = useState('Toutes');
   const [typeFourniture, setTypeFourniture] = useState('couches');
   const [commentaireFourniture, setCommentaireFourniture] = useState('');
   const [loadingFourniture, setLoadingFourniture] = useState(false);
+
+  // 🚀 ÉTATS POUR LES LISTES DE GARDE
+  const [modalGardeVisible, setModalGardeVisible] = useState(false);
+  const [activeGardeTab, setActiveGardeTab] = useState('midi'); 
+  const [filterClasseGarde, setFilterClasseGarde] = useState('Toutes');
 
   const crecheId = Constants.expoConfig?.extra?.crecheId || 'jeupousse';
   const selectedLogo = logoAssets[crecheId] || logoAssets.jeupousse;
@@ -84,9 +91,7 @@ export default function DashboardAdmin({ navigation }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'enfants' }, () => calculerAnniversairesProchains())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'planning_presences' }, () => calculerAbsencesDuMois())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'recuperations_sos' }, () => chargerHistoriqueSOS())
-      .subscribe((status) => {
-        console.log("🔌 Statut connexion Realtime Admin :", status);
-      });
+      .subscribe();
 
     return () => { if (realtimeChannel) supabase.removeChannel(realtimeChannel); };
   }, []);
@@ -112,34 +117,113 @@ export default function DashboardAdmin({ navigation }) {
 
   const chargerEnfants = async () => {
     try {
-      const { data } = await supabase.from('enfants').select('id, prenom, nom, parent_id, classe').order('prenom');
-      if (data) {
-        setEnfantsList(data);
-      }
+      const { data } = await supabase.from('enfants').select('id, prenom, nom, parent_id, classe, photo_url, types_garde').order('prenom');
+      if (data) setEnfantsList(data);
     } catch (error) { console.log(error); }
   };
 
-  // 🚀 GESTION DYNAMIQUE DE LA LISTE D'ENFANTS FILTRÉE (Fournitures)
   const enfantsFiltresFourniture = enfantsList.filter(e => filterClasseFourniture === 'Toutes' || (e.classe || 'Crèche') === filterClasseFourniture);
 
-  // 🚀 MISE À JOUR AUTO DU SÉLECTEUR QUAND LE FILTRE CHANGE
   useEffect(() => {
     if (enfantsFiltresFourniture.length > 0) {
       const isCurrentValid = enfantsFiltresFourniture.some(e => e.id === selectedEnfantFourniture);
-      if (!isCurrentValid) {
-        setSelectedEnfantFourniture(enfantsFiltresFourniture[0].id);
-      }
+      if (!isCurrentValid) setSelectedEnfantFourniture(enfantsFiltresFourniture[0].id);
     } else {
       setSelectedEnfantFourniture('');
     }
   }, [filterClasseFourniture, enfantsList]);
+
+  // 🚀 LOGIQUE SÉCURISÉE DE FILTRAGE DES LISTES DE GARDE
+  const enfantsGardeAffiches = enfantsList.filter(e => {
+    if (!e.types_garde) return false;
+    const tg = String(e.types_garde).toLowerCase();
+    
+    let matchGarde = false;
+    if (activeGardeTab === 'midi' && tg.includes('12h')) matchGarde = true;
+    if (activeGardeTab === 'tardive' && tg.includes('tardive')) matchGarde = true;
+    if (activeGardeTab === 'mercredi' && tg.includes('mercredi')) matchGarde = true;
+
+    let matchClasse = filterClasseGarde === 'Toutes' || (e.classe || 'Crèche') === filterClasseGarde;
+
+    return matchGarde && matchClasse;
+  });
+
+  const imprimerListeGarde = async () => {
+    if (enfantsGardeAffiches.length === 0) return alert("La liste est vide, impossible d'imprimer.");
+    
+    try {
+      let titleGarde = "Garde de 12h à 14h";
+      if (activeGardeTab === 'tardive') titleGarde = "Garde Tardive après 17h";
+      if (activeGardeTab === 'mercredi') titleGarde = "Garde des Mercredis après-midi";
+
+      const listeItemsHtml = enfantsGardeAffiches.map(e => `
+        <tr>
+          <td>${(e.nom || '').toUpperCase()} ${e.prenom || ''}</td>
+          <td>${e.classe || 'Crèche'}</td>
+          <td></td>
+        </tr>
+      `).join('');
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html lang="fr">
+          <head>
+            <meta charset="utf-8">
+            <style>
+              body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #111827; padding: 30px; }
+              h1 { color: #4F46E5; text-align: center; margin-bottom: 5px; }
+              h2 { color: #64748B; text-align: center; font-size: 16px; margin-bottom: 30px; }
+              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+              th, td { border: 1px solid #CBD5E1; padding: 12px; text-align: left; }
+              th { background-color: #F1F5F9; color: #1E293B; font-weight: bold; }
+              td { color: #334155; }
+              .creche-name { text-align: center; font-weight: bold; color: #94A3B8; margin-bottom: 20px; text-transform: uppercase; }
+            </style>
+          </head>
+          <body>
+            <div class="creche-name">${nomCreche}</div>
+            <h1>Liste d'appel : ${titleGarde}</h1>
+            <h2>Classe : ${filterClasseGarde} | Total : ${enfantsGardeAffiches.length} enfant(s)</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 50%">Nom & Prénom</th>
+                  <th style="width: 25%">Classe</th>
+                  <th style="width: 25%">Pointage (Signature)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${listeItemsHtml}
+              </tbody>
+            </table>
+          </body>
+        </html>
+      `;
+
+      if (Platform.OS === 'web') {
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(htmlContent); 
+          printWindow.document.close(); 
+          printWindow.focus();
+          setTimeout(() => { printWindow.print(); printWindow.close(); }, 300);
+        } else { 
+          alert("Veuillez autoriser les pop-ups."); 
+        }
+      } else {
+        const { uri } = await Print.printToFileAsync({ html: htmlContent });
+        if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri);
+      }
+    } catch (error) {
+      alert("Erreur lors de l'impression : " + error.message);
+    }
+  };
 
   const envoyerDemandeFourniture = async () => {
     if (!selectedEnfantFourniture) return Alert.alert("Erreur", "Veuillez sélectionner un enfant.");
     setLoadingFourniture(true);
     try {
       const enfant = enfantsList.find(e => e.id === selectedEnfantFourniture);
-      
       const { error } = await supabase.from('demandes_fournitures').insert([{
         enfant_id: enfant.id,
         parent_id: enfant.parent_id,
@@ -147,7 +231,6 @@ export default function DashboardAdmin({ navigation }) {
         commentaire: commentaireFourniture,
         statut: 'en_attente'
       }]);
-      
       if (error) throw error;
       
       if (enfant.parent_id) {
@@ -171,12 +254,7 @@ export default function DashboardAdmin({ navigation }) {
       Alert.alert("Demande envoyée ✅", "Le parent a été notifié avec succès.");
       setModalFournituresVisible(false);
       setCommentaireFourniture('');
-    } catch (e) {
-      Alert.alert("Erreur", "Impossible d'envoyer la demande.");
-      console.log(e);
-    } finally {
-      setLoadingFourniture(false);
-    }
+    } catch (e) { Alert.alert("Erreur", "Impossible d'envoyer la demande."); } finally { setLoadingFourniture(false); }
   };
 
   const calculerAbsencesDuMois = async () => {
@@ -187,7 +265,7 @@ export default function DashboardAdmin({ navigation }) {
         setListeAbsences(data);
         setAbsencesCount(data.filter(a => a.statut === 'Prévu').length);
       }
-    } catch(err) { console.log(err.message); }
+    } catch(err) {}
   };
 
   const ouvrirModalAbsences = async () => {
@@ -204,7 +282,7 @@ export default function DashboardAdmin({ navigation }) {
     try {
       const { data } = await supabase.from('recuperations_sos').select('*, enfants(prenom, nom, classe, photo_url)').not('date_validation', 'is', null).order('date_validation', { ascending: false });
       if (data) setListeSOSHistory(data);
-    } catch (e) { console.log(e); }
+    } catch (e) {}
   };
 
   const verifierCodeSOS = async () => {
@@ -229,7 +307,7 @@ export default function DashboardAdmin({ navigation }) {
       const { data: { user } } = await supabase.auth.getUser();
       const { error = null } = await supabase.from('recuperations_sos').update({ date_validation: new Date().toISOString(), valide_par_admin_id: user.id }).eq('id', sosResult.id);
       if (error) throw error;
-      Alert.alert("Sécurité Validée ✅", `Sortie de ${sosResult.enfants.prenom} enregistrée.`);
+      Alert.alert("Sécurité Validée ✅", `Sortie de ${sosResult.enfants?.prenom || ''} enregistrée.`);
       setSosResult(null); setInputCodeSOS('');
       chargerHistoriqueSOS();
     } catch (e) { Alert.alert("Erreur", "Validation échouée."); }
@@ -264,7 +342,7 @@ export default function DashboardAdmin({ navigation }) {
         }).sort((a, b) => a.diffDays - b.diffDays);
         setBirthdayKids(listeAnniversaires); setBirthdayCount(listeAnniversaires.length);
       }
-    } catch (err) { console.log(err.message); }
+    } catch (err) {}
   };
 
   const envoyerSouhaitAnniversaire = async (enfant) => {
@@ -313,17 +391,37 @@ export default function DashboardAdmin({ navigation }) {
     } catch (error) {}
   };
 
+  // 🚀 LOGIQUE SÉCURISÉE ABSENCES (Évite les plantages si le prénom est vide)
   const absencesFiltrees = listeAbsences.filter(abs => {
     const matchClasse = filterClasseAbsence === 'Toutes' || (abs.enfants?.classe || 'Crèche') === filterClasseAbsence;
-    const searchLow = searchAbsence.toLowerCase().trim();
-    const matchText = !searchLow || abs.enfants?.prenom.toLowerCase().includes(searchLow) || abs.enfants?.nom.toLowerCase().includes(searchLow) || abs.motif.toLowerCase().includes(searchLow);
+    const searchLow = (searchAbsence || '').toLowerCase().trim();
+    
+    const prenom = abs.enfants?.prenom || '';
+    const nom = abs.enfants?.nom || '';
+    const motif = abs.motif || '';
+
+    const matchText = !searchLow || 
+      prenom.toLowerCase().includes(searchLow) || 
+      nom.toLowerCase().includes(searchLow) || 
+      motif.toLowerCase().includes(searchLow);
+
     return matchClasse && matchText;
   });
 
+  // 🚀 LOGIQUE SÉCURISÉE SOS
   const sosFiltrees = listeSOSHistory.filter(sos => {
     const matchClasse = filterClasseSOS === 'Toutes' || (sos.enfants?.classe || 'Crèche') === filterClasseSOS;
-    const searchLow = searchSOS.toLowerCase().trim();
-    const matchText = !searchLow || sos.enfants?.prenom.toLowerCase().includes(searchLow) || sos.enfants?.nom.toLowerCase().includes(searchLow) || sos.nom_tierce_personne.toLowerCase().includes(searchLow);
+    const searchLow = (searchSOS || '').toLowerCase().trim();
+    
+    const prenom = sos.enfants?.prenom || '';
+    const nom = sos.enfants?.nom || '';
+    const tierce = sos.nom_tierce_personne || '';
+
+    const matchText = !searchLow || 
+      prenom.toLowerCase().includes(searchLow) || 
+      nom.toLowerCase().includes(searchLow) || 
+      tierce.toLowerCase().includes(searchLow);
+
     return matchClasse && matchText;
   });
 
@@ -388,9 +486,14 @@ export default function DashboardAdmin({ navigation }) {
             <Text style={styles.cardDesc}>{absencesCount > 0 ? `${absencesCount} nouvelle(s)` : "Gérer les présences"}</Text>
           </TouchableOpacity>
 
+          <TouchableOpacity style={[styles.card, { borderBottomColor: '#8D6E63' }]} onPress={() => setModalGardeVisible(true)}>
+            <View style={[styles.iconCircle, { backgroundColor: '#EFEBE9' }]}><Text style={styles.cardIcon}>🧸</Text></View>
+            <Text style={styles.cardTitle}>Listes Garde</Text>
+            <Text style={styles.cardDesc}>Midi, Tardive, Mercredi</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity style={[styles.card, { borderBottomColor: '#8BC34A' }]} onPress={() => navigation.navigate('CahierAdmin')}><View style={[styles.iconCircle, { backgroundColor: '#F1F8E9' }]}><Text style={styles.cardIcon}>📝</Text></View><Text style={styles.cardTitle}>Cahier Quotidien</Text><Text style={styles.cardDesc}>Repas, siestes, suivi</Text></TouchableOpacity>
 
-          {/* 🚀 TUILE : DEMANDE DE FOURNITURES */}
           <TouchableOpacity style={[styles.card, { borderBottomColor: '#E040FB' }]} onPress={() => setModalFournituresVisible(true)}>
             <View style={[styles.iconCircle, { backgroundColor: '#F3E5F5' }]}><Text style={styles.cardIcon}>📦</Text></View>
             <Text style={styles.cardTitle}>Fournitures</Text>
@@ -456,7 +559,64 @@ export default function DashboardAdmin({ navigation }) {
         <View style={styles.footer}><Text style={styles.footerText}>Developped by A S © 2026</Text></View>
       </ScrollView>
 
-      {/* 🚀 MODAL FOURNITURES AVEC FILTRE PAR CLASSE */}
+      {/* 🚀 MODALE LISTES DE GARDE */}
+      <Modal visible={modalGardeVisible} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+            <Text style={styles.modalEmojiHeader}>🧸</Text>
+            <Text style={styles.modalTitle}>Listes de Garde</Text>
+            <Text style={styles.modalSubtitle}>Enfants inscrits par type de garde</Text>
+
+            <View style={styles.tabsRow}>
+              <TouchableOpacity onPress={() => setActiveGardeTab('midi')} style={[styles.tabBtn, activeGardeTab === 'midi' ? [styles.tabBtnActiveSOS, { backgroundColor: '#8D6E63' }] : styles.tabBtnInactive]}>
+                <Text style={activeGardeTab === 'midi' ? styles.tabTextActive : styles.tabTextInactive}>Midi</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setActiveGardeTab('tardive')} style={[styles.tabBtn, activeGardeTab === 'tardive' ? [styles.tabBtnActiveSOS, { backgroundColor: '#8D6E63' }] : styles.tabBtnInactive]}>
+                <Text style={activeGardeTab === 'tardive' ? styles.tabTextActive : styles.tabTextInactive}>Tardive</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setActiveGardeTab('mercredi')} style={[styles.tabBtn, activeGardeTab === 'mercredi' ? [styles.tabBtnActiveSOS, { backgroundColor: '#8D6E63' }] : styles.tabBtnInactive]}>
+                <Text style={activeGardeTab === 'mercredi' ? styles.tabTextActive : styles.tabTextInactive}>Mercredis</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.pillsScroll, {marginBottom: 10}]}>
+              {classesList.map(c => (
+                <TouchableOpacity key={c} style={[styles.filterPill, filterClasseGarde === c && [styles.filterPillActive, { backgroundColor: '#8D6E63', borderColor: '#8D6E63' }]]} onPress={() => setFilterClasseGarde(c)}>
+                  <Text style={[styles.filterPillText, filterClasseGarde === c && styles.filterPillTextActive]}>{c}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 300 }}>
+              {enfantsGardeAffiches.length === 0 ? (
+                <View style={styles.emptyContainer}><Text style={styles.emptyText}>Aucun enfant inscrit dans cette catégorie.</Text></View>
+              ) : (
+                enfantsGardeAffiches.map(kid => (
+                  <View key={kid.id} style={styles.kidRow}>
+                    {kid.photo_url ? <Image source={{ uri: kid.photo_url }} style={styles.kidAvatar} /> : <View style={styles.kidAvatarPlaceholder}><Text style={{fontSize: 22}}>👶</Text></View>}
+                    <View style={styles.kidInfoContainer}>
+                      <Text style={styles.kidName}>{kid.prenom} {kid.nom}</Text>
+                      <Text style={styles.parentStatusText}>Classe : {kid.classe || 'Crèche'}</Text>
+                    </View>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+
+            {enfantsGardeAffiches.length > 0 && (
+              <TouchableOpacity style={styles.printBtnAction} onPress={imprimerListeGarde}>
+                <Text style={{color: '#FFF', fontWeight: 'bold', fontSize: 15}}>🖨️ Imprimer la liste</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity style={styles.closeModalBtn} onPress={() => setModalGardeVisible(false)}>
+              <Text style={styles.closeModalBtnText}>Fermer</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL FOURNITURES */}
       <Modal visible={modalFournituresVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
@@ -466,8 +626,6 @@ export default function DashboardAdmin({ navigation }) {
               <Text style={styles.modalSubtitle}>Alerter un parent qu'il manque un élément</Text>
               
               <ScrollView showsVerticalScrollIndicator={false}>
-                
-                {/* 🚀 AJOUT DU FILTRE PAR CLASSE ICI */}
                 <Text style={styles.labelInput}>Filtrer par classe :</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.pillsScroll, {marginBottom: 15}]}>
                   {classesList.map(c => (
@@ -526,7 +684,7 @@ export default function DashboardAdmin({ navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* MODAL 1 : ANNIVERSAIRES */}
+      {/* MODAL ANNIVERSAIRES */}
       <Modal visible={modalBirthdayVisible} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { maxHeight: '80%' }]}>
@@ -556,7 +714,7 @@ export default function DashboardAdmin({ navigation }) {
         </View>
       </Modal>
 
-      {/* MODAL 2 : CONTRÔLEUR SOS */}
+      {/* MODAL CONTRÔLEUR SOS */}
       <Modal visible={modalSOSVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
@@ -631,7 +789,7 @@ export default function DashboardAdmin({ navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* MODAL 3 : ABSENCES */}
+      {/* MODAL ABSENCES */}
       <Modal visible={modalAbsencesVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <View style={styles.modalOverlay}>
@@ -729,6 +887,7 @@ const styles = StyleSheet.create({
   wishBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   closeModalBtn: { backgroundColor: '#F1F5F9', padding: 14, borderRadius: 14, alignItems: 'center', marginTop: 20 },
   closeModalBtnText: { color: '#475569', fontWeight: '800', fontSize: 14 },
+  printBtnAction: { backgroundColor: '#4F46E5', padding: 14, borderRadius: 14, alignItems: 'center', marginTop: 15 },
 
   searchBarContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', borderRadius: 10, paddingHorizontal: 12, height: 40, marginBottom: 10 },
   searchBarInput: { flex: 1, marginLeft: 8, fontSize: 14, color: '#334155' },

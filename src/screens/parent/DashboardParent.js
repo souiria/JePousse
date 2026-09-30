@@ -55,11 +55,15 @@ const themes = {
   demo: { primary: '#2196F3', background: '#E3F2FD', buttonText: '#FFFFFF' }
 };
 
+const moisNomsCal = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+
 const PostImageCarousel = ({ imageUrls, onImagePress, onVideoPress }) => {
   const [activeIndex, setActiveIndex] = useState(0);
 
+  const IMAGE_WIDTH = DYNAMIC_CARD_WIDTH - 4;
+
   const handleScroll = (event) => {
-    const slide = Math.round(event.nativeEvent.contentOffset.x / DYNAMIC_CARD_WIDTH);
+    const slide = Math.round(event.nativeEvent.contentOffset.x / IMAGE_WIDTH);
     if (slide !== activeIndex && slide >= 0 && slide < imageUrls.length) {
       setActiveIndex(slide);
     }
@@ -76,11 +80,11 @@ const PostImageCarousel = ({ imageUrls, onImagePress, onVideoPress }) => {
 
       return (
         <TouchableOpacity activeOpacity={0.9} onPress={() => onVideoPress(cleanUrl)}>
-          <View style={{ position: 'relative' }}>
+          <View style={{ position: 'relative', width: IMAGE_WIDTH }}>
             {thumbnailUrl ? (
-              <Image source={{ uri: thumbnailUrl }} style={[styles.postMultiImage, { width: DYNAMIC_CARD_WIDTH }]} resizeMode="cover" />
+              <Image source={{ uri: thumbnailUrl }} style={[styles.postMultiImage, { width: IMAGE_WIDTH }]} resizeMode="cover" />
             ) : (
-              <View style={[styles.postMultiImage, { backgroundColor: '#1E293B', width: DYNAMIC_CARD_WIDTH }]} />
+              <View style={[styles.postMultiImage, { backgroundColor: '#1E293B', width: IMAGE_WIDTH }]} />
             )}
             <View style={styles.playOverlay}>
               <View style={styles.playCircle}>
@@ -94,7 +98,7 @@ const PostImageCarousel = ({ imageUrls, onImagePress, onVideoPress }) => {
 
     return (
       <TouchableOpacity activeOpacity={0.9} onPress={() => onImagePress(url)}>
-        <Image source={{ uri: url }} style={[styles.postMultiImage, { width: DYNAMIC_CARD_WIDTH }]} resizeMode="cover" />
+        <Image source={{ uri: url }} style={[styles.postMultiImage, { width: IMAGE_WIDTH }]} resizeMode="cover" />
       </TouchableOpacity>
     );
   };
@@ -106,7 +110,10 @@ const PostImageCarousel = ({ imageUrls, onImagePress, onVideoPress }) => {
         keyExtractor={(_, index) => index.toString()}
         renderItem={renderCarouselItem}
         horizontal
-        pagingEnabled
+        snapToInterval={IMAGE_WIDTH}
+        snapToAlignment="start"
+        decelerationRate="fast"
+        disableIntervalMomentum={true}
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={handleScroll}
         initialNumToRender={2}
@@ -114,8 +121,8 @@ const PostImageCarousel = ({ imageUrls, onImagePress, onVideoPress }) => {
         windowSize={3}
         removeClippedSubviews={Platform.OS === 'android'}
         getItemLayout={(_, index) => ({
-          length: DYNAMIC_CARD_WIDTH,
-          offset: DYNAMIC_CARD_WIDTH * index,
+          length: IMAGE_WIDTH,
+          offset: IMAGE_WIDTH * index,
           index,
         })}
       />
@@ -182,6 +189,10 @@ export default function DashboardParentScreen({ navigation }) {
 
   const [demandesFournitures, setDemandesFournitures] = useState([]);
 
+  // 🚀 ÉTATS POUR LES COMMENTAIRES (Lecture seule pour les parents)
+  const [modalCommentairesVisible, setModalCommentairesVisible] = useState(false);
+  const [postActifCommentaires, setPostActifCommentaires] = useState(null);
+
   const crecheId = Constants.expoConfig?.extra?.crecheId || 'jeupousse';
   const selectedLogo = logoAssets[crecheId] || logoAssets.jeupousse;
   const currentTheme = themes[crecheId] || themes.jeupousse;
@@ -206,6 +217,9 @@ export default function DashboardParentScreen({ navigation }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sondages_votes' }, () => { chargerMur(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'participations' }, () => { chargerMur(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'demandes_fournitures' }, () => { chargerDonneesParent(); })
+      // 🚀 ÉCOUTEURS DES LIKES ET COMMENTAIRES EN TEMPS RÉEL
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'likes_publications' }, () => { chargerMur(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'commentaires_publications' }, () => { chargerMur(); })
       .subscribe();
 
     return () => { 
@@ -273,27 +287,6 @@ export default function DashboardParentScreen({ navigation }) {
     else { Alert.alert("Déconnexion", "Voulez-vous vraiment vous déconnecter ?", [{ text: "Annuler", style: "cancel" }, { text: "Oui", style: "destructive", onPress: executerDeconnexion }]); }
   };
 
-  const handleDeleteAccount = () => {
-    if (Platform.OS === 'web') {
-      if (window.confirm("Êtes-vous sûr de vouloir supprimer définitivement votre compte et toutes vos données ? Cette action est irréversible.")) {
-        window.alert("Votre demande de suppression a été transmise à l'administration de la crèche. Votre compte sera clôturé sous 48h.");
-        handleSecureLogout();
-      }
-    } else {
-      Alert.alert(
-        "Supprimer le compte",
-        "Êtes-vous sûr de vouloir supprimer définitivement votre compte et toutes vos données ? Cette action est irréversible.",
-        [
-          { text: "Annuler", style: "cancel" },
-          { text: "Oui, supprimer", style: "destructive", onPress: () => {
-              Alert.alert("Demande envoyée", "Pour des raisons de sécurité liées à la crèche, votre demande de suppression a été transmise à l'administration. Votre compte sera clôturé sous 48h.", [{ text: "OK", onPress: () => handleSecureLogout() }]);
-            }
-          }
-        ]
-      );
-    }
-  };
-
   const demanderNotificationsWeb = async () => {
     try {
       const permission = await Notification.requestPermission();
@@ -336,14 +329,11 @@ export default function DashboardParentScreen({ navigation }) {
         .select(`
           *,
           sondages_options (id, texte_option, sondages_votes(id, parent_id)),
-          participations (id, enfant_id, statut)
+          participations (id, enfant_id, statut),
+          likes_publications (parent_id),
+          commentaires_publications (id, texte, date_creation, auteur_id, utilisateurs(prenom, nom))
         `)
         .order('date_creation', { ascending: false });
-
-      if (error) {
-        console.log("Erreur chargement mur:", error.message);
-        return;
-      }
 
       if (data) {
         const now = new Date();
@@ -356,8 +346,37 @@ export default function DashboardParentScreen({ navigation }) {
         });
 
         setPublications([...publicationsTriees]);
+
+        // Mettre à jour les commentaires en direct si la modale est ouverte
+        if (postActifCommentaires) {
+          const postMisAJour = publicationsTriees.find(p => p.id === postActifCommentaires.id);
+          if (postMisAJour) setPostActifCommentaires(postMisAJour);
+        }
       }
     } catch (e) { console.log("Catch mur :", e.message); }
+  };
+
+  // 🚀 FONCTION POUR LIKER / UNLIKER (Les parents peuvent toujours Liker)
+  const toggleLike = async (publicationId, estLike) => {
+    try {
+      if (!currentUserId) return;
+      if (estLike) {
+        await supabase.from('likes_publications').delete().match({ publication_id: publicationId, parent_id: currentUserId });
+      } else {
+        await supabase.from('likes_publications').insert({ publication_id: publicationId, parent_id: currentUserId });
+      }
+      chargerMur();
+    } catch (e) { console.log(e); }
+  };
+
+  const ouvrirCommentaires = (post) => {
+    setPostActifCommentaires(post);
+    setModalCommentairesVisible(true);
+  };
+
+  const formaterDateCom = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).replace(',', ' à');
   };
 
   const voterSondage = async (publicationId, optionId) => {
@@ -380,8 +399,6 @@ export default function DashboardParentScreen({ navigation }) {
         if (error.code === '23505') {
           if (Platform.OS === 'web') window.alert("Vous avez déjà voté à ce sondage.");
           else Alert.alert("Info", "Vous avez déjà voté à ce sondage.");
-        } else {
-          throw error;
         }
       }
       chargerMur();
@@ -414,7 +431,6 @@ export default function DashboardParentScreen({ navigation }) {
     } catch (error) { 
       if (Platform.OS === 'web') window.alert("Erreur d'enregistrement : " + error.message);
       else Alert.alert("Erreur", error.message);
-      console.log("Erreur RSVP :", error); 
     }
   };
 
@@ -568,9 +584,76 @@ export default function DashboardParentScreen({ navigation }) {
 
   if (loading && enfants.length === 0) { return (<View style={[styles.center, { backgroundColor: currentTheme.background }]}><ActivityIndicator size="large" color={currentTheme.primary} /></View>); }
 
-  const facturesEnAttente = factures.filter(f => f.statut === 'en_attente');
-  const facturesEnVerification = factures.filter(f => f.statut === 'en_verification');
-  const facturesPayees = factures.filter(f => f.statut === 'paye');
+  const trierFactures = (a, b) => {
+    const aIsInsc = a.type === 'inscription' || (a.titre || '').toLowerCase().includes("inscription");
+    const bIsInsc = b.type === 'inscription' || (b.titre || '').toLowerCase().includes("inscription");
+    if (aIsInsc && !bIsInsc) return -1;
+    if (!aIsInsc && bIsInsc) return 1;
+
+    const ordreMoisScolaire = {
+      'Septembre': 1, 'Octobre': 2, 'Novembre': 3, 'Décembre': 4,
+      'Janvier': 5, 'Février': 6, 'Mars': 7, 'Avril': 8, 'Mai': 9,
+      'Juin': 10, 'Juillet': 11, 'Août': 12
+    };
+    const ordreA = ordreMoisScolaire[a.mois] || 99;
+    const ordreB = ordreMoisScolaire[b.mois] || 99;
+    if (ordreA !== ordreB) return ordreA - ordreB;
+
+    return (a.titre || '').localeCompare(b.titre || '');
+  };
+
+  const facturesEnAttente = factures.filter(f => f.statut === 'en_attente').sort(trierFactures);
+  const facturesEnVerification = factures.filter(f => f.statut === 'en_verification').sort(trierFactures);
+  const facturesPayees = factures.filter(f => f.statut === 'paye').sort(trierFactures);
+
+  let countRetard = 0;
+  let countAPayer = 0;
+
+  facturesEnAttente.forEach(facture => {
+    let anneeScolaire = null;
+    const matchYear = facture.titre?.match(/\((\d{4}-\d{4})\)/);
+    if (matchYear && matchYear[1]) {
+      anneeScolaire = matchYear[1];
+    } else if (facture.enfants?.annee_scolaire) {
+      anneeScolaire = facture.enfants.annee_scolaire;
+    } else {
+      const d = new Date(facture.date_creation);
+      anneeScolaire = (d.getMonth() + 1) >= 8 ? `${d.getFullYear()}-${d.getFullYear()+1}` : `${d.getFullYear()-1}-${d.getFullYear()}`;
+    }
+
+    if (!anneeScolaire || !anneeScolaire.includes('-')) {
+      countAPayer++;
+      return;
+    }
+
+    const startYear = parseInt(anneeScolaire.split('-')[0], 10);
+    const moisIndexZero = moisNomsCal.indexOf(facture.mois); 
+    if (moisIndexZero === -1) {
+      countAPayer++; 
+      return;
+    }
+
+    const factureYear = moisIndexZero >= 8 ? startYear : startYear + 1;
+    const currentDate = new Date();
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth();
+    const currentDay = currentDate.getDate();
+
+    if (factureYear < currentYear) {
+      countRetard++;
+    } else if (factureYear > currentYear) {
+      // Future
+    } else {
+      if (moisIndexZero < currentMonth) {
+        countRetard++;
+      } else if (moisIndexZero === currentMonth) {
+        if (currentDay > 5) countRetard++;
+        else countAPayer++;
+      }
+    }
+  });
+
+  const totalAlertes = countRetard + countAPayer;
 
   return (
     <SafeAreaView style={[styles.rootContainer, { backgroundColor: currentTheme.background }]} edges={['top', 'left', 'right', 'bottom']}>
@@ -619,6 +702,27 @@ export default function DashboardParentScreen({ navigation }) {
           </View>
         )}
 
+        {activeTab !== 'factures' && (countRetard > 0 || countAPayer > 0) && (
+          <TouchableOpacity 
+            style={[
+              styles.relanceBanner, 
+              countRetard > 0 ? { backgroundColor: '#EF4444' } : { backgroundColor: '#F59E0B' }
+            ]} 
+            onPress={() => setActiveTab('factures')}
+          >
+            <Text style={styles.relanceText}>
+              {countRetard > 0 ? `⚠️ Vous avez ${countRetard} facture(s) en retard.` :
+               countAPayer > 0 ? `⏳ Vous avez ${countAPayer} facture(s) à payer.` :
+               `✅ Vos paiements sont à jour.`}
+            </Text>
+          </TouchableOpacity>
+        )}
+        {activeTab !== 'factures' && countRetard === 0 && countAPayer === 0 && factures.length > 0 && (
+          <TouchableOpacity style={[styles.relanceBanner, { backgroundColor: '#10B981' }]} onPress={() => setActiveTab('factures')}>
+             <Text style={styles.relanceText}>✅ Vos paiements sont à jour.</Text>
+          </TouchableOpacity>
+        )}
+
         <View style={styles.content}>
           
           {/* ONGLET 1: LE MUR */}
@@ -640,6 +744,11 @@ export default function DashboardParentScreen({ navigation }) {
 
                   const isEvent = item.type_post === 'evenement';
                   const isEventClosed = isEvent && item.date_limite_reponse ? new Date() > new Date(item.date_limite_reponse) : false;
+
+                  // 🚀 INSTAGRAM STATS
+                  const likes = item.likes_publications || [];
+                  const commentaires = item.commentaires_publications || [];
+                  const monLike = likes.some(l => l.parent_id === currentUserId);
 
                   return (
                     <View style={[styles.postContainer, {borderLeftColor: currentTheme.primary, borderLeftWidth: 4}]}>
@@ -738,10 +847,32 @@ export default function DashboardParentScreen({ navigation }) {
                       )}
                       
                       {imageUrls.length > 0 && (
-                        <View style={{marginTop: 15}}>
+                        <View style={{marginTop: 5}}>
                           <PostImageCarousel imageUrls={imageUrls} onImagePress={(url) => { setImageView(url); setModalImageVisible(true); marquerCommeVu(item.id); }} onVideoPress={(cleanUrl) => { Linking.openURL(cleanUrl); marquerCommeVu(item.id); }} />
                         </View>
                       )}
+
+                      {/* 🚀 BARRE INSTAGRAM (Likes & Commentaires) */}
+                      <View style={styles.instagramActionBar}>
+                        <TouchableOpacity style={styles.actionBtn} onPress={() => toggleLike(item.id, monLike)}>
+                          <Text style={styles.actionIcon}>{monLike ? '❤️' : '🤍'}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.actionBtn} onPress={() => ouvrirCommentaires(item)}>
+                          <Text style={styles.actionIcon}>💬</Text>
+                        </TouchableOpacity>
+                      </View>
+                      
+                      {likes.length > 0 && (
+                        <Text style={styles.likesCount}>{likes.length} J'aime</Text>
+                      )}
+                      
+                      {commentaires.length > 0 && (
+                        <TouchableOpacity onPress={() => ouvrirCommentaires(item)}>
+                          <Text style={styles.commentsCount}>Voir les {commentaires.length} message(s) de la direction</Text>
+                        </TouchableOpacity>
+                      )}
+                      <View style={{ height: 15 }} />
+
                     </View>
                   );
                 }} 
@@ -798,11 +929,6 @@ export default function DashboardParentScreen({ navigation }) {
                                   <Text style={[styles.timelineTitle, { color: currentTheme.primary }]}>{progres.titre_competence}</Text>
                                   <Text style={styles.timelineDate}>{new Date(progres.date_creation).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</Text>
                                   {progres.description ? <Text style={styles.timelineDesc}>{progres.description}</Text> : null}
-                                  {progres.photo_url ? (
-                                    <TouchableOpacity onPress={() => { setImageView(progres.photo_url); setModalImageVisible(true); }}>
-                                      <Image source={{ uri: progres.photo_url }} style={styles.timelineImage} />
-                                    </TouchableOpacity>
-                                  ) : null}
                                 </View>
                               </View>
                             ))}
@@ -825,7 +951,6 @@ export default function DashboardParentScreen({ navigation }) {
                         </View>
                       ) : <Text style={{color: '#95A5A6', fontStyle: 'italic', marginBottom: 15, fontSize: 12, paddingLeft: 5}}>Le résumé de la journée n'est pas encore disponible.</Text>}
 
-                      {/* HISTORIQUE ABSENCES (Restauré) */}
                       {listeAbsencesKid.length > 0 && (
                         <View style={styles.absencesTrackingBox}>
                           <Text style={styles.absencesTrackingTitle}>📅 Historique des Absences ({listeAbsencesKid.length})</Text>
@@ -839,7 +964,6 @@ export default function DashboardParentScreen({ navigation }) {
                         </View>
                       )}
 
-                      {/* SORTIE SOS ACTIVE (Restauré) */}
                       {activeSOS && (
                         <View style={styles.sosStatusActiveCard}>
                           <Text style={styles.sosStatusTitle}>🛡️ Sortie SOS Active</Text>
@@ -848,7 +972,6 @@ export default function DashboardParentScreen({ navigation }) {
                         </View>
                       )}
 
-                      {/* 🚀 BOÎTE MEDICALE (Réorganisée pour éviter l'écrasement) */}
                       <View style={styles.medicalBox}>
                         <Text style={styles.medicalTitle}>🍽️ Régime spécifique & Santé :</Text>
                         <Text style={[styles.medicalText, !enfant.details_allergie && !enfant.remarques_medicales && {color: '#10B981', fontStyle: 'italic'}]}>
@@ -859,17 +982,14 @@ export default function DashboardParentScreen({ navigation }) {
                           <Text style={styles.editMedicalText}>✏️ Modifier Régime / Santé</Text>
                         </TouchableOpacity>
 
-                        <View style={{flexDirection: 'row', justifyContent: 'space-between'}}>
-                          <TouchableOpacity style={[styles.actionBtnSecondary, {backgroundColor: '#673AB7', width: '48%'}]} onPress={() => { setEnfantSelectionne(enfant); setModalAbsenceVisible(true); }}>
-                            <Text style={styles.editMedicalText}>📅 Signaler Absence</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={[styles.actionBtnSecondary, {backgroundColor: '#FF5722', width: '48%'}]} onPress={() => { setEnfantSelectionne(enfant); setModalSOSVisible(true); }}>
-                            <Text style={styles.editMedicalText}>🛡️ Code Sortie SOS</Text>
-                          </TouchableOpacity>
-                        </View>
+                        <TouchableOpacity style={[styles.editMedicalBtn, {backgroundColor: '#673AB7', width: '100%', marginBottom: 10}]} onPress={() => { setEnfantSelectionne(enfant); setModalAbsenceVisible(true); }}>
+                          <Text style={styles.editMedicalText}>📅 Signaler une Absence</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.editMedicalBtn, {backgroundColor: '#FF5722', width: '100%'}]} onPress={() => { setEnfantSelectionne(enfant); setModalSOSVisible(true); }}>
+                          <Text style={styles.editMedicalText}>🛡️ Générer Code Sortie SOS</Text>
+                        </TouchableOpacity>
                       </View>
 
-                      {/* 🚀 BLOC ATTESTATION DE SCOLARITÉ (Restauré) */}
                       <View style={styles.attestationBlock}>
                         <View style={styles.attestationHeader}>
                           <Text style={styles.attestationTitleText}>📄 Attestation de scolarité</Text>
@@ -944,14 +1064,51 @@ export default function DashboardParentScreen({ navigation }) {
             <ScrollView showsVerticalScrollIndicator={false}>
               <Text style={[styles.sectionTitle, {color: currentTheme.primary}]}>💳 Mes Factures & Paiements ({facturesEnAttente.length})</Text>
               {facturesEnAttente.length === 0 ? <Text style={styles.emptyText}>Aucune facture en attente de paiement. 🎉</Text> : 
-                facturesEnAttente.map(item => (
-                  <View key={item.id.toString()} style={styles.factureCard}>
-                    <View style={styles.factureHeader}><View><Text style={styles.factureTitre}>{item.titre}</Text><Text style={styles.factureEnfant}>👦 {item.enfants?.prenom}</Text></View><Text style={styles.factureMontant}>{item.montant} Dhs</Text></View>
-                    <TouchableOpacity style={[styles.payButton, { backgroundColor: currentTheme.primary }]} onPress={() => {setFactureAPayer(item); setRecuUri(null); setRecuBase64(null); setModalPaiementVisible(true);}}>
-                      <Text style={styles.payButtonText}>Régler par Virement</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))
+                facturesEnAttente.map(item => {
+                  const moisIndexZero = moisNomsCal.indexOf(item.mois);
+                  let borderColor = '#E2E8F0';
+                  let textColor = '#1E293B';
+                  
+                  if (moisIndexZero !== -1) {
+                    const today = new Date();
+                    const currentMonth = today.getMonth();
+                    const currentDay = today.getDate();
+                    const currentYear = today.getFullYear();
+                    
+                    let factureYear = currentYear;
+                    const matchYear = item.titre?.match(/\((\d{4}-\d{4})\)/);
+                    if (matchYear && matchYear[1]) {
+                      const startYear = parseInt(matchYear[1].split('-')[0], 10);
+                      factureYear = moisIndexZero >= 8 ? startYear : startYear + 1;
+                    } else if (item.enfants?.annee_scolaire) {
+                      const startYear = parseInt(item.enfants.annee_scolaire.split('-')[0], 10);
+                      factureYear = moisIndexZero >= 8 ? startYear : startYear + 1;
+                    }
+
+                    if (factureYear < currentYear || (factureYear === currentYear && moisIndexZero < currentMonth) || (factureYear === currentYear && moisIndexZero === currentMonth && currentDay > 5)) {
+                      borderColor = '#EF4444';
+                      textColor = '#EF4444'; 
+                    } else if (factureYear === currentYear && moisIndexZero === currentMonth && currentDay <= 5) {
+                      borderColor = '#F59E0B';
+                      textColor = '#F59E0B'; 
+                    }
+                  }
+
+                  return (
+                    <View key={item.id.toString()} style={[styles.factureCard, { borderLeftColor: borderColor }]}>
+                      <View style={styles.factureHeader}>
+                        <View style={{flex: 1, paddingRight: 10}}>
+                          <Text style={[styles.factureTitre, {color: textColor}]} numberOfLines={2}>{item.titre}</Text>
+                          <Text style={styles.factureEnfant}>👦 {item.enfants?.prenom}</Text>
+                        </View>
+                        <Text style={[styles.factureMontant, {color: textColor}]}>{item.montant} Dhs</Text>
+                      </View>
+                      <TouchableOpacity style={[styles.payButton, { backgroundColor: '#0F172A' }]} onPress={() => {setFactureAPayer(item); setRecuUri(null); setRecuBase64(null); setModalPaiementVisible(true);}}>
+                        <Text style={styles.payButtonText}>Régler par Virement</Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })
               }
             </ScrollView>
           )}
@@ -961,11 +1118,45 @@ export default function DashboardParentScreen({ navigation }) {
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('mur')}><Text style={[styles.navIcon, activeTab === 'mur' && {color: currentTheme.primary}]}>🏠</Text><Text style={[styles.navText, activeTab === 'mur' && {color: currentTheme.primary}]}>Le Mur</Text></TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('dossiers')}><Text style={[styles.navIcon, activeTab === 'dossiers' && {color: '#8BC34A'}]}>🎒</Text><Text style={[styles.navText, activeTab === 'dossiers' && {color: '#8BC34A'}]}>Dossiers</Text></TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('ressources')}><Text style={[styles.navIcon, activeTab === 'ressources' && {color: '#9C27B0'}]}>📂</Text><Text style={[styles.navText, activeTab === 'ressources' && {color: '#9C27B0'}]}>Infos</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('factures')}><View><Text style={[styles.navIcon, activeTab === 'factures' && {color: '#FF9800'}]}>💳</Text></View><Text style={[styles.navText, activeTab === 'factures' && {color: '#FF9800'}]}>Paiements</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('factures')}><View><Text style={[styles.navIcon, activeTab === 'factures' && {color: '#FF9800'}]}>💳</Text>{totalAlertes > 0 && <View style={styles.badge}><Text style={styles.badgeText}>{totalAlertes}</Text></View>}</View><Text style={[styles.navText, activeTab === 'factures' && {color: '#FF9800'}]}>Paiements</Text></TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Messagerie')}><View><Text style={styles.navIcon}>💬</Text>{unreadCount > 0 && <View style={styles.badge}><Text style={styles.badgeText}>{unreadCount}</Text></View>}</View><Text style={styles.navText}>Messages</Text></TouchableOpacity>
         </View>
-
       </View>
+
+      {/* 🚀 MODALE DES COMMENTAIRES INSTAGRAM (LECTURE SEULE) */}
+      <Modal visible={modalCommentairesVisible} animationType="slide" transparent={true}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <View style={styles.modalOverlayComments}>
+            <View style={styles.modalContentComments}>
+              <View style={styles.commentHeaderBar}>
+                <Text style={styles.modalTitleComments}>Messages de la direction</Text>
+                <TouchableOpacity onPress={() => setModalCommentairesVisible(false)} style={styles.closeCommentBtn}><Text style={styles.closeCommentBtnText}>✖</Text></TouchableOpacity>
+              </View>
+              
+              <ScrollView showsVerticalScrollIndicator={false} style={styles.commentsList}>
+                {postActifCommentaires?.commentaires_publications?.length === 0 ? (
+                  <Text style={styles.emptyText}>Aucun message de la direction pour l'instant.</Text>
+                ) : (
+                  postActifCommentaires?.commentaires_publications?.map((c) => (
+                    <View key={c.id} style={styles.commentRow}>
+                      <View style={styles.commentAvatar}><Text>👤</Text></View>
+                      <View style={styles.commentTextBubble}>
+                        <Text style={styles.commentAuthor}>
+                          {(c.utilisateurs?.prenom?.trim() || c.utilisateurs?.nom?.trim()) ? `${c.utilisateurs?.prenom || ''} ${c.utilisateurs?.nom || ''}`.trim() : 'La Direction'} 
+                          <Text style={styles.commentDate}> • {formaterDateCom(c.date_creation)}</Text>
+                        </Text>
+                        <Text style={styles.commentText}>{c.texte}</Text>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </ScrollView>
+              
+              {/* Note: La zone de saisie (TextInput et bouton Envoyer) a été retirée pour empêcher les parents de créer des commentaires. */}
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <Modal visible={modalMedicalVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
@@ -996,7 +1187,7 @@ export default function DashboardParentScreen({ navigation }) {
                 <Text style={styles.modalTitle}>Déclarer une absence pour {enfantSelectionne?.prenom}</Text>
                 <Text style={styles.label}>Date de l'absence</Text>
                 {Platform.OS === 'web' ? (
-                  <input type="date" value={absenceDate} onChange={(e) => setAbsenceDate(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: '1px solid #E2E8F0', backgroundColor: '#F8FAFC', fontSize: '14px', outline: 'none', boxSizing: 'border-box', marginBottom: '10px' }} />
+                  <input type="date" value={absenceDate} onChange={(e) => setAbsenceDate(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: '1px solid #E2E8F0', backgroundColor: '#F8FAFC', fontSize: '14px', outlineStyle: 'none', boxSizing: 'border-box', marginBottom: '10px' }} />
                 ) : (
                   <View>
                     <TouchableOpacity style={styles.datePickerSelectorRow} onPress={() => setShowAbsenceDatePicker(true)}>
@@ -1079,7 +1270,7 @@ export default function DashboardParentScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  rootContainer: { flex: 1 },
+  rootContainer: { flex: 1, backgroundColor: '#F8FAFC' },
   desktopWrapper: {
     flex: 1,
     width: '100%',
@@ -1105,6 +1296,10 @@ const styles = StyleSheet.create({
   webNotifyBtn: { backgroundColor: '#E0F7FA', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#B2EBF2' },
   webNotifyText: { fontSize: 12, color: '#00BCD4', fontWeight: '800' },
 
+  // 🚀 STYLE DU BANDEAU DE RELANCE FACTURE
+  relanceBanner: { padding: 15, alignItems: 'center', justifyContent: 'center', marginTop: 15, marginHorizontal: 15, borderRadius: 12 },
+  relanceText: { color: '#FFF', fontWeight: 'bold', fontSize: 14, textAlign: 'center' },
+
   content: { flex: 1, padding: 15 },
   sectionTitle: { fontSize: 18, fontWeight: '800', color: '#1E293B', marginBottom: 15, marginTop: 10 },
   
@@ -1114,6 +1309,28 @@ const styles = StyleSheet.create({
   postAuthor: { fontWeight: '800', color: '#E91E63', fontSize: 16 },
   postDate: { color: '#64748B', fontSize: 12, fontWeight: '500' },
   postDescription: { color: '#334155', fontSize: 15, lineHeight: 22, fontWeight: '500', paddingHorizontal: 15, marginBottom: 10 },
+
+  // 🚀 STYLES INSTAGRAM BAR
+  instagramActionBar: { flexDirection: 'row', paddingHorizontal: 15, marginTop: 10, alignItems: 'center' },
+  actionBtn: { marginRight: 15 },
+  actionIcon: { fontSize: 24 },
+  likesCount: { fontWeight: 'bold', paddingHorizontal: 15, marginTop: 8, color: '#0F172A', fontSize: 14 },
+  commentsCount: { color: '#64748B', paddingHorizontal: 15, marginTop: 4, fontSize: 14, fontWeight: '500' },
+
+  // 🚀 STYLES MODALE COMMENTAIRES
+  modalOverlayComments: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContentComments: { backgroundColor: '#FFFFFF', height: '75%', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
+  commentHeaderBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F1F5F9', paddingBottom: 15, marginBottom: 15 },
+  modalTitleComments: { fontSize: 16, fontWeight: '800', color: '#0F172A', textAlign: 'center', flex: 1 },
+  closeCommentBtn: { padding: 5 },
+  closeCommentBtnText: { fontSize: 18, color: '#64748B', fontWeight: 'bold' },
+  commentsList: { flex: 1 },
+  commentRow: { flexDirection: 'row', marginBottom: 15, alignItems: 'flex-start' },
+  commentAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  commentTextBubble: { flex: 1, backgroundColor: '#F8FAFC', padding: 12, borderRadius: 16, borderTopLeftRadius: 4 },
+  commentAuthor: { fontWeight: '800', fontSize: 13, color: '#0F172A', marginBottom: 3 },
+  commentDate: { fontWeight: 'normal', color: '#94A3B8', fontSize: 11 },
+  commentText: { color: '#334155', fontSize: 14, lineHeight: 20 },
 
   sondageQuestion: { fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 15 },
   pollContainerParent: { paddingHorizontal: 15, paddingBottom: 15 },
