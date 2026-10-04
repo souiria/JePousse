@@ -49,7 +49,6 @@ export default function PaiementsAdminScreen() {
   const [montantDepense, setMontantDepense] = useState('');
   const [categorieDepense, setCategorieDepense] = useState('salaire'); 
 
-  // 🚀 État pour la modale d'export Excel
   const [modalExportVisible, setModalExportVisible] = useState(false);
 
   const [anneeActive, setAnneeActive] = useState('');
@@ -196,7 +195,6 @@ export default function PaiementsAdminScreen() {
   const paiementsFiltres = paiements.filter(p => filtrerParAnnee(p, anneeActive));
   const depensesFiltres = depenses.filter(d => filtrerDepenseParAnnee(d, anneeActive));
 
-  // 🚀 FONCTION EXPORT EXCEL
   const genererExcel = async (typeExport) => {
     setModalExportVisible(false);
     try {
@@ -247,7 +245,6 @@ export default function PaiementsAdminScreen() {
         csvString += `"${parentName}";"${enfantName}";"${classe}";"${mois}";"${titre}";"${montant}";"${statutStr}";"${methode}";"${datePaiement}"\n`;
       });
 
-      // LIGNE DE TOTAL À LA FIN
       csvString += `\n;;;;TOTAL EXPORT;"${totalMontant} Dhs";;;\n`;
 
       const finalCsv = BOM + csvString;
@@ -327,7 +324,11 @@ export default function PaiementsAdminScreen() {
 
     setLoading(true);
     const anneePourTitre = anneeActive === 'Toutes' ? anneesDisponibles[2] : anneeActive;
-    let typeBase = factTypeSaisie === 'mensuel' ? factService.toLowerCase() : 'extra';
+    
+    // 🚀 L'Activité PADL s'enregistrera sous le type 'padl' pour l'analyse
+    let typeBase = factTypeSaisie === 'mensuel' 
+      ? (factService === 'Activité PADL' ? 'padl' : factService.includes('Garde') ? 'garde' : factService.toLowerCase()) 
+      : 'extra';
 
     try {
       const payloads = [];
@@ -606,7 +607,6 @@ export default function PaiementsAdminScreen() {
     } catch (error) { alert("Erreur d'impression : " + error.message); }
   };
 
-  // 🚀 LOGIQUE INTELLIGENTE DES DATES
   const getStatutFacture = (facture) => {
     if (facture.statut === 'paye') return { label: 'Payé', color: '#10B981', code: 'paye' };
     if (facture.statut === 'en_verification') return { label: 'À vérifier 👀', color: '#8B5CF6', code: 'verification' };
@@ -1312,6 +1312,7 @@ export default function PaiementsAdminScreen() {
                         <Picker.Item label="Transport" value="Transport" />
                         <Picker.Item label="Garde" value="Garde" />
                         <Picker.Item label="Frais d'inscription" value="Frais d'inscription" />
+                        <Picker.Item label="Activité PADL" value="Activité PADL" /> {/* 🚀 AJOUT DE PADL ICI */}
                       </Picker>
                     </View>
                     <Text style={styles.label}>Mois concerné(s) - Sélectionnez un ou plusieurs</Text>

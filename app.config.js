@@ -43,11 +43,11 @@ export default {
   expo: {
     name: currentConfig.name,
     slug: "creche-base-app", 
-    version: "1.1.1",
+    version: "1.1.2",
     icon: currentConfig.icon,
     ios: { 
       bundleIdentifier: currentConfig.bundleId,
-      buildNumber: "16",
+      buildNumber: "17",
       // 🚀 AJOUT DE LA CONFIGURATION D'EXPORTATION APPLE :
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false
@@ -55,7 +55,7 @@ export default {
     },
     android: { 
       package: currentConfig.bundleId,
-      versionCode: 17,
+      versionCode: 18,
       googleServicesFile: "./google-services.json" 
     },
     extra: {
